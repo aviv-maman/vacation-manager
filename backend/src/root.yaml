@@ -112,12 +112,23 @@ paths:
   /vacation-requests/mine:
     get:
       x-handler: handlers/listings#getMine
-      summary: List only the authenticated Requester's requests
+      x-inputParser: handlers/listings#parseMineInput
+      summary: Paginate only the authenticated Requester's requests
       security:
         - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+            default: 1
       responses:
         "200":
-          description: Own requests including status, reason, and comments
+          description: Own request items, page, pageSize, and own filtered total
+        "400":
+          description: Invalid page
         "401":
           description: Authentication required
         "403":
@@ -150,6 +161,7 @@ paths:
       x-handler: handlers/listings#getTeamVacations
       x-inputParser: handlers/listings#parseTeamInput
       summary: List approved team vacations overlapping an inclusive date range
+      description: To must be on or after from and no more than 366 days later.
       security:
         - bearerAuth: []
       parameters:
@@ -169,7 +181,7 @@ paths:
         "200":
           description: Items containing only name, startDate, and endDate; both roles allowed
         "400":
-          description: Missing or invalid dates, or to before from
+          description: Missing or invalid dates, reversed range, or range exceeding 366 days
         "401":
           description: Authentication required
   /vacation-requests/:id/approve:

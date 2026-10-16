@@ -17,14 +17,6 @@ export interface TeamRangeInput {
 
 const pageSize = 10;
 
-export async function listOwnRequests(database: DataSource, userId: number) {
-  const requests = await database.getRepository(VacationRequest).find({
-    where: { userId },
-    order: { createdAt: "DESC", id: "DESC" },
-  });
-  return { items: requests.map(requestView) };
-}
-
 export async function listRequests(database: DataSource, input: RequestListInput) {
   const query = database
     .getRepository(VacationRequest)

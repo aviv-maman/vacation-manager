@@ -3,12 +3,7 @@ import { requireUser } from "../auth/require-user";
 import { getDatabase } from "../database/data-source";
 import { HttpError } from "../errors/HttpError";
 import { isDateOnly } from "../vacations/dates";
-import {
-  listOwnRequests,
-  listRequesters,
-  listRequests,
-  listTeamVacations,
-} from "../vacations/queries";
+import { listRequesters, listRequests, listTeamVacations } from "../vacations/queries";
 import type { RequestListInput, TeamRangeInput } from "../vacations/queries";
 import type { HandlerFn, InputParserFn } from "./types";
 
@@ -18,6 +13,14 @@ function positiveInteger(value: unknown, name: string): number {
   }
   return Number(value);
 }
+
+function pageNumber(value: string | undefined): number {
+  return value === undefined ? 1 : positiveInteger(value, "Page");
+}
+
+export const parseMineInput: InputParserFn<Pick<RequestListInput, "page">> = (event) => ({
+  page: pageNumber(event.queryStringParameters?.page),
+});
 
 export const parseListInput: InputParserFn<RequestListInput> = (event) => {
   const { page, status, userId } = event.queryStringParameters ?? {};
@@ -30,7 +33,7 @@ export const parseListInput: InputParserFn<RequestListInput> = (event) => {
     throw new HttpError(400, "Status must be Pending, Approved, or Rejected");
   }
   return {
-    page: page === undefined ? 1 : positiveInteger(page, "Page"),
+    page: pageNumber(page),
     status,
     userId: userId === undefined ? undefined : positiveInteger(userId, "User ID"),
   };
@@ -50,12 +53,14 @@ export const parseTeamInput: InputParserFn<TeamRangeInput> = (event) => {
     throw new HttpError(400, "From and to must be real calendar dates in YYYY-MM-DD format");
   }
   if (to < from) throw new HttpError(400, "To date must be on or after from date");
+  const days = (Date.parse(`${to}T00:00:00Z`) - Date.parse(`${from}T00:00:00Z`)) / 86_400_000;
+  if (days > 366) throw new HttpError(400, "Team date range must not exceed 366 days");
   return { from, to };
 };
 
-export const getMine: HandlerFn = async (_input, event) => {
+export const getMine: HandlerFn<Pick<RequestListInput, "page">> = async ({ page }, event) => {
   const actor = await requireUser(event, ["Requester"]);
-  return new Response(200, await listOwnRequests(await getDatabase(), actor.id), {
+  return new Response(200, await listRequests(await getDatabase(), { page, userId: actor.id }), {
     "Cache-Control": "no-store",
   });
 };

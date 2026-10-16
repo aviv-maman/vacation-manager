@@ -143,6 +143,7 @@ describe("request listings and team planning through CEF routes", () => {
       for (const userId of [String(other.id), "not-a-user"]) {
         const response = await api(`/vacation-requests/mine?userId=${userId}`, user);
         expect(response.statusCode).toBe(200);
+        expect(body(response)).toMatchObject({ page: 1, pageSize: 10, total: 8 });
         expect(items(response).map((request) => request.id)).toEqual(expected);
         expect(items(response).every((request) => request.userId === user.id)).toBe(true);
         expect(new Set(items(response).map((request) => request.status))).toEqual(
@@ -152,9 +153,50 @@ describe("request listings and team planning through CEF routes", () => {
           reason: `Private reason for ${user.name}`,
           comments: `Private rejection for ${user.name}`,
         });
-        expect(items(response)[0]).not.toHaveProperty("user");
+        expect(items(response)[0]?.user).toEqual({ id: user.id, name: user.name });
         expect(response.headers?.["Cache-Control"]).toBe("no-store");
       }
+    }
+  });
+
+  it("paginates each owner's requests without leaking another user's rows or total", async () => {
+    const repository = database.getRepository(VacationRequest);
+    for (const user of [alice, bob]) {
+      const added = await repository.save(
+        Array.from({ length: 6 }, (_, index) =>
+          repository.create({
+            userId: user.id,
+            startDate: dateAfter(40 + index * 4),
+            endDate: dateAfter(42 + index * 4),
+            status: "Rejected",
+            comments: "Extra pagination fixture",
+            reason: "Private pagination reason",
+            createdAt: new Date("2040-01-01T00:00:00Z"),
+          }),
+        ),
+      );
+      requests.push(...added);
+    }
+    expect(await repository.count()).toBe(28);
+    for (const [user, other] of [
+      [alice, bob],
+      [bob, alice],
+    ] as const) {
+      const seen: unknown[] = [];
+      const expected = requests
+        .filter((request) => request.userId === user.id)
+        .map((request) => request.id)
+        .sort((a, b) => b - a);
+      for (const page of [1, 2, 3]) {
+        const response = await api(`/vacation-requests/mine?page=${page}&userId=${other.id}`, user);
+        expect(response.statusCode).toBe(200);
+        expect(body(response)).toMatchObject({ page, pageSize: 10, total: 14 });
+        expect(items(response)).toHaveLength(page === 1 ? 10 : page === 2 ? 4 : 0);
+        expect(items(response).every((request) => request.userId === user.id)).toBe(true);
+        seen.push(...items(response).map((request) => request.id));
+      }
+      expect(seen).toEqual(expected);
+      expect(new Set(seen).size).toBe(14);
     }
   });
 
@@ -162,7 +204,7 @@ describe("request listings and team planning through CEF routes", () => {
     await database.getRepository(VacationRequest).delete({ userId: alice.id });
     const response = await api("/vacation-requests/mine", alice);
     expect(response.statusCode).toBe(200);
-    expect(body(response)).toEqual({ items: [] });
+    expect(body(response)).toEqual({ items: [], page: 1, pageSize: 10, total: 0 });
     expect(await database.getRepository(VacationRequest).count()).toBe(8);
   });
 
@@ -324,6 +366,14 @@ describe("request listings and team planning through CEF routes", () => {
         (await api(`/vacation-requests?${new URLSearchParams({ [field]: value })}`)).statusCode,
       ).toBe(400);
     }
+    const mine = await api(
+      `/vacation-requests/mine?${new URLSearchParams({ page: value })}`,
+      alice,
+    );
+    expect(mine.statusCode).toBe(400);
+    expect(body(mine)).toEqual(
+      body(await api(`/vacation-requests?${new URLSearchParams({ page: value })}`)),
+    );
   });
 
   it("lists Requesters for the filter dropdown with only IDs and names", async () => {
@@ -407,6 +457,21 @@ describe("request listings and team planning through CEF routes", () => {
       .filter((query) => query.includes('FROM "vacation_requests"'));
     expect(reads).toHaveLength(1);
     expect(reads[0]).not.toMatch(/reason|comments|email|password/);
+  });
+
+  it.each([
+    ["2050-01-01", "2051-01-02", 200],
+    ["2050-01-01", "2051-01-03", 400],
+    ["2024-01-01", "2025-01-01", 200],
+    ["2024-01-01", "2025-01-02", 400],
+  ] as const)("bounds team range from %s through %s with status %i", async (from, to, status) => {
+    const response = await api(`/team-vacations?from=${from}&to=${to}`, alice);
+    expect(response.statusCode).toBe(status);
+    if (status === 400) {
+      expect(body(response)).toEqual({ error: "Team date range must not exceed 366 days" });
+    } else {
+      expect(items(response)).toHaveLength(from.startsWith("2050") ? 6 : 0);
+    }
   });
 
   it.each([

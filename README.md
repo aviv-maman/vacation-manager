@@ -216,20 +216,20 @@ All read endpoints require a bearer token and return `Cache-Control: no-store`. 
 
 | Endpoint                      | Role      | Query                                                        | Response                                                                                                |
 | ----------------------------- | --------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
-| `GET /vacation-requests/mine` | Requester | None                                                         | `{ "items": [request, ...] }`                                                                           |
+| `GET /vacation-requests/mine` | Requester | Optional `page`; any `userId` is ignored                     | `{ "items": [requestWithUser, ...], "page": 1, "pageSize": 10, "total": 8 }`                            |
 | `GET /vacation-requests`      | Validator | Optional `status`, `userId`, `page`                          | `{ "items": [requestWithUser, ...], "page": 1, "pageSize": 10, "total": 16 }`                           |
 | `GET /users?role=Requester`   | Validator | Only `Requester` is supported; omitted `role` defaults to it | `{ "items": [{ "id": 1, "name": "Alice Requester" }, ...] }`                                            |
-| `GET /team-vacations`         | Both      | Required `from` and `to` dates                               | `{ "items": [{ "name": "Alice Requester", "startDate": "2050-01-05", "endDate": "2050-01-07" }, ...] }` |
+| `GET /team-vacations`         | Both      | Required `from` and `to`; maximum 366 days apart             | `{ "items": [{ "name": "Alice Requester", "startDate": "2050-01-05", "endDate": "2050-01-07" }, ...] }` |
 
-The own-request listing takes identity only from the authenticated user. Any `userId` query is ignored, so one Requester cannot inspect another Requester's requests. It returns all owned requests, including status, reason, and rejection comments, ordered by `createdAt DESC, id DESC`. Validators receive 403 on this endpoint.
+The own-request listing takes identity only from the authenticated user. Any `userId` query is ignored, so one Requester cannot inspect another Requester's requests. It reuses the Validator listing query with the user ID fixed to the token's user, returning ten-row pages with status, reason, rejection comments, and the user's safe ID/name. Its `total` counts only that user's requests. `page` defaults to 1 and uses the same validation and `createdAt DESC, id DESC` ordering as the Validator listing. A page past the end returns an empty list with the same own total. Validators receive 403 on this endpoint.
 
 The Validator listing supports status and user filters independently or together. Status must be exactly `Pending`, `Approved`, or `Rejected`. `userId` and `page` must be positive decimal integers up to 2147483647; blank, zero, negative, fractional, and malformed values return 400. Missing `page` defaults to 1. Omit unused filters instead of sending empty strings. A valid user ID with no requests produces an empty result.
 
-Pagination runs in SQL through TypeORM `skip`/`take`, with a fixed page size of 10 and `createdAt DESC, id DESC` sorting. `total` counts all rows matching the filters, independent of the requested page. A page beyond the results returns `items: []` with that same filtered total. Each row contains the normal request fields plus `user: { id, name }`. A join fetches names without one user query per request; employee emails and password hashes are not selected. The dropdown endpoint also selects and returns only Requester IDs and names, ordered by name then ID.
+Both request listings share one SQL pagination implementation through TypeORM `skip`/`take`, with a fixed page size of 10 and `createdAt DESC, id DESC` sorting. `total` counts all rows matching the filters, independent of the requested page. A page beyond the results returns `items: []` with that same filtered total. Each row contains the normal request fields plus `user: { id, name }`. A join fetches names without one user query per request; employee emails and password hashes are not selected. The dropdown endpoint also selects and returns only Requester IDs and names, ordered by name then ID.
 
 Team planning interprets the assignment's team as all users belonging to one team. Both roles see **Approved vacations only**, with exactly `name`, `startDate`, and `endDate`. Reasons, rejection comments, emails, and IDs are excluded through explicit SQL selection and a fixed response projection. The query uses hydrated TypeORM entities rather than raw date values, preserving date strings.
 
-Team dates must pass the same calendar-date check as request submission, but allow past ranges and `to >= from`, including a single day. The inclusive overlap condition is `startDate <= to AND endDate >= from`; it includes vacations starting or ending on a boundary and those spanning the entire filter range. Results are ordered by start date then request ID. There is no team calendar UI or team-view pagination.
+Team dates must pass the same calendar-date check as request submission, but allow past ranges and `to >= from`, including a single day. `to` may be at most 366 calendar days after `from`: exactly 366 days is accepted and 367 returns 400. The difference is calculated at UTC midnight so daylight-saving changes cannot affect it; because the endpoints are inclusive, a maximum-length range covers 367 date labels. This cap bounds the date window while keeping the team view unpaginated. The inclusive overlap condition is `startDate <= to AND endDate >= from`; it includes vacations starting or ending on a boundary and those spanning the entire filter range. Results are ordered by start date then request ID. There is no team calendar UI.
 
 For a read-only browser check, open `/health` and run the authentication example to obtain Alice's `session`. Then run:
 
@@ -244,17 +244,26 @@ const readWithToken = async (path, token) => {
   const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
   return { status: response.status, body: await response.json() };
 };
-console.log(await readWithToken("/vacation-requests/mine", session.token));
+console.log(await readWithToken("/vacation-requests/mine?page=1", session.token));
+console.log(await readWithToken("/vacation-requests/mine?page=2", session.token));
 console.log(await readWithToken("/users?role=Requester", validatorSession.token));
 console.log(await readWithToken("/vacation-requests?page=1", validatorSession.token));
 console.log(await readWithToken("/vacation-requests?page=2", validatorSession.token));
 console.log(
   await readWithToken("/vacation-requests?status=Approved&userId=1", validatorSession.token),
 );
-console.log(await readWithToken("/team-vacations?from=2000-01-01&to=2100-12-31", session.token));
+const planningFrom = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(
+  new Date(),
+);
+const planningEnd = new Date(`${planningFrom}T00:00:00Z`);
+planningEnd.setUTCDate(planningEnd.getUTCDate() + 60);
+const planningTo = planningEnd.toISOString().slice(0, 10);
+console.log(
+  await readWithToken(`/team-vacations?from=${planningFrom}&to=${planningTo}`, session.token),
+);
 ```
 
-With the original seed, the all-request pages contain 10 and 6 rows, with total 16. Each Requester has 8 requests and the team view has 6 Approved vacations. These counts change when you submit or decide requests. Requesters receive 403 on the Validator listing/dropdown, and missing tokens receive 401 on every read endpoint. The broad team range above is only for checking the seeded examples; any valid range can be used.
+With a fresh seed, the all-request pages contain 10 and 6 rows, with total 16. Each Requester has 8 requests: own page 1 has 8 rows, page 2 is empty, and both report total 8. The next-60-day team range contains the 6 freshly seeded Approved vacations. These counts change when you submit or decide requests or when seeded dates fall outside the selected range. Requesters receive 403 on the Validator listing/dropdown, and missing tokens receive 401 on every read endpoint. Any valid team range of up to 366 elapsed days can be used.
 
 ## Backend tests and checks
 
@@ -305,7 +314,7 @@ The frontend lint command can apply fixes; backend lint only reports errors.
 - Vacation dates are PostgreSQL `DATE` columns mapped to `YYYY-MM-DD` strings. Creation/update timestamps use `timestamptz`.
 - Database checks require `end_date > start_date` and a nonblank comment for Rejected requests.
 - A partial GiST exclusion constraint combines the user ID with `daterange(start_date, end_date, '[]')` for Pending and Approved requests. End dates are inclusive, so vacations that share an endpoint conflict. Rejected requests do not block dates. PostgreSQL enforces this constraint across concurrent writes. See [PostgreSQL range constraints](https://www.postgresql.org/docs/17/rangetypes.html#RANGETYPES-CONSTRAINT) and [btree_gist](https://www.postgresql.org/docs/17/btree-gist.html).
-- Listing indexes start with status or user ID, followed by descending creation time and ID. More query tuning can follow real listing queries.
+- Listing indexes start with status or user ID, followed by descending creation time and ID. Both request listings use ten-row SQL pages. Team planning remains unpaginated with a maximum range of 366 elapsed days; the range cap does not limit how many employees or vacations can appear within that window. More query tuning can follow real listing queries.
 - The backend provides login, token verification, role checks, creation ownership, date rules, final-state transitions, commands, business events, requester-owned listings, validator filters/pagination, the requester dropdown, and the approved team view. Frontend session handling and application screens remain for the next milestone.
 - CEF uses `root.yaml`, generated handler references, and its own build/local server. Routes can use synchronous or asynchronous `x-inputParser` functions. There is no Express server or AWS deployment.
 - The source target remains ES2022 with ES2023 library types for CEF's bundled esbuild; Node 24 supplies TypeORM's runtime requirements. Explicit SQL column types avoid relying on inferred decorator metadata.
