@@ -98,7 +98,7 @@ A write follows **CEF route → input parser → handler → command → transac
 | `ApproveVacationRequestCommand` | Validator role, Pending state, locked decision             | `VacationRequestApprovedEvent` |
 | `RejectVacationRequestCommand`  | Validator role, Pending state, nonblank comment            | `VacationRequestRejectedEvent` |
 
-Events publish **after commit** and only produce structured logs of event type, IDs, and time. They exclude credentials, tokens, reasons, and comments; listener failures cannot fail an already-committed request.
+The [commands](backend/src/vacations/commands.ts) publish events **after commit** through the [event publisher and logging handler](backend/src/vacations/events.ts). Logs contain only event type, IDs, and time; listener failures cannot fail an already-committed request.
 
 ## API
 
@@ -119,7 +119,7 @@ All routes except login and health require a bearer token. Request/response deta
 
 ## Business rules and assumptions
 
-- Requesters submit only for themselves; identity comes from the token. Only Validators can decide requests, and the backend enforces every permission.
+- Requesters submit only for themselves; Validators cannot submit. Any Validator can decide any Pending request. The backend enforces identity and permissions.
 - Dates must be real calendar dates, with end strictly after start. A request may start today in **Asia/Jerusalem**, but never earlier.
 - End dates are **inclusive**: sharing an endpoint counts as overlap. Pending and Approved requests block the same user's dates; Rejected requests do not.
 - New requests are Pending. Approved and Rejected are final; a Validator may still decide a Pending request whose start date has passed.
@@ -140,7 +140,7 @@ All routes except login and health require a bearer token. Request/response deta
 
 ## Known limitations
 
-- Seeded accounts only; no registration, password recovery, request editing, cancellation, deletion, or decision reversal.
+- Single-team model with seeded accounts only; no registration, password recovery, request editing, cancellation, deletion, or decision reversal.
 - Tokens use JavaScript-readable `sessionStorage`, so XSS could steal them; no httpOnly-cookie design or refresh tokens are implemented.
 - Team planning is an unpaginated table; its date-range cap does not limit the number of matching rows.
 - Events are in-process notifications, without durable delivery or a persistent audit trail; a crash after commit can lose an event.
