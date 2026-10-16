@@ -1,0 +1,52 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Segoe UI", system-ui, sans-serif;
+}
+
+@layer base {
+  body {
+    @apply m-0 bg-slate-50 font-sans text-slate-900 antialiased;
+  }
+  button,
+  a,
+  input,
+  select,
+  textarea {
+    @apply focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-emerald-700;
+  }
+  button:not(:disabled),
+  select {
+    cursor: pointer;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-slate-200 bg-white shadow-sm;
+  }
+  .button {
+    @apply inline-flex min-h-11 touch-manipulation items-center justify-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors motion-reduce:transition-none disabled:cursor-not-allowed disabled:opacity-50;
+  }
+  .button-primary {
+    @apply bg-emerald-700 text-white hover:bg-emerald-800;
+  }
+  .button-secondary {
+    @apply border border-slate-300 bg-white text-slate-700 hover:bg-slate-50;
+  }
+  .field {
+    @apply block min-h-11 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900;
+  }
+  .label {
+    @apply mb-2 block text-sm font-semibold text-slate-700;
+  }
+  .page-title {
+    @apply text-3xl font-semibold tracking-tight text-balance text-slate-900;
+  }
+  .table-head {
+    @apply px-5 py-3 text-left text-xs font-semibold uppercase tracking-wider text-slate-500;
+  }
+  .table-cell {
+    @apply px-5 py-4 align-top text-sm;
+  }
+}

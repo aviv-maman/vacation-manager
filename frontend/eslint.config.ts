@@ -4,6 +4,14 @@ import pluginVue from "eslint-plugin-vue";
 import pluginVitest from "@vitest/eslint-plugin";
 import pluginOxlint from "eslint-plugin-oxlint";
 import skipFormatting from "eslint-config-prettier/flat";
+import stylistic from "@stylistic/eslint-plugin";
+
+const variableStatements = [
+  "const",
+  "let",
+  "var",
+  { selector: "ExportNamedDeclaration[declaration.type='VariableDeclaration']" },
+];
 
 // To allow more languages other than `ts` in `.vue` files, uncomment the following lines:
 // import { configureVueProject } from '@vue/eslint-config-typescript'
@@ -29,4 +37,28 @@ export default defineConfigWithVueTs(
   ...pluginOxlint.buildFromOxlintConfigFile(".oxlintrc.json"),
 
   skipFormatting,
+  {
+    name: "app/statement-spacing",
+    plugins: { "@stylistic": stylistic },
+    rules: {
+      "@stylistic/padding-line-between-statements": [
+        "error",
+        { blankLine: "always", prev: "import", next: "*" },
+        { blankLine: "any", prev: "import", next: "import" },
+        { blankLine: "always", prev: "*", next: variableStatements },
+        { blankLine: "always", prev: variableStatements, next: "*" },
+        {
+          blankLine: "always",
+          prev: "*",
+          next: ["function", "class", "interface", "type", "export", "return"],
+        },
+        {
+          blankLine: "always",
+          prev: ["function", "class", "interface", "type", "export"],
+          next: "*",
+        },
+        { blankLine: "any", prev: variableStatements, next: variableStatements },
+      ],
+    },
+  },
 );

@@ -2,13 +2,19 @@
 
 A vacation request management assignment, built step by step.
 
-## Current milestone: request listings and team planning
+## Current milestone: Vue interfaces
 
-The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration and repeatable seed provide the schema and demo data. Login issues an expiring JWT, and protected command endpoints create, approve, and reject vacation requests. Business events produce structured logs after successful commits. Requesters can list their own requests; Validators can filter and paginate all requests. Both roles can view approved team vacations without private request details. The frontend remains the Vue scaffold; application screens belong to the next milestone.
+Vacation Manager runs locally with a Vue 3/TypeScript frontend, Tailwind CSS 4, and one Axios client. Requesters submit and track their own requests; Validators filter, paginate, approve, and reject them. Both roles can view approved team vacations without private request details. The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL, with explicit migrations, repeatable demo data, JWT authentication, and business events logged after successful commits.
 
 ```text
 vacation-manager/
-  frontend/                       Vue scaffold
+  frontend/src/
+    views/                        Thin route composition
+    components/                   Auth, navigation, requests, team, shared controls
+    composables/                  Session and shared request pagination
+    lib/                          Axios client, session storage, date formatting
+    router/                       Routes and role guards
+    types/                        Shared API contracts
   backend/
     src/entities/                 TypeORM mappings
     src/auth/                     JWT signing, verification, user and role checks
@@ -98,7 +104,7 @@ Then run:
 npm run seed
 ```
 
-A fresh database receives these accounts and 16 requests, enough to demonstrate pagination later:
+A fresh database receives these accounts and 16 requests, enough to demonstrate dashboard pagination:
 
 | Name            | Email             | Role      |
 | --------------- | ----------------- | --------- |
@@ -143,7 +149,9 @@ Open [http://localhost:8888/health](http://localhost:8888/health). The expected 
 
 This endpoint checks connectivity with `SELECT 1`; migration and seed verification are separate. A database outage returns HTTP 503 with `{"status":"error","database":"unavailable"}`. Restoring PostgreSQL restores health without restarting the backend. Unmapped routes and CEF's automatic diagnostic routes return 404.
 
-From `frontend/`, run `npm run dev` and open the URL printed by Vite. The page remains the scaffold's welcome screen; there are no vacation screens yet.
+In a second terminal, from `frontend/`, run `npm run dev` and open the URL printed by Vite (normally [http://localhost:5173](http://localhost:5173)). Keep both servers running. Log in with a demo account above: Alice and Bob land on **My requests**, and Maya lands on **Review requests**.
+
+Vite proxies `/auth`, `/vacation-requests`, `/users`, and `/team-vacations` to `http://localhost:8888`. Components use relative API paths, so development needs no backend CORS configuration. This is a development proxy; the static production build needs equivalent same-origin API routing and history fallback if hosted later. Deployment is outside this assignment.
 
 To inspect the seeded data with Docker, from the repository root:
 
@@ -180,9 +188,29 @@ console.log(meResponse.status, await meResponse.json());
 console.log("Without a token:", (await fetch("/auth/me")).status);
 ```
 
-Expect 200 for login/profile and 401 without a token. Repeat with `maya@example.com` to check the Validator profile. `/auth/me` supports both roles. Role-restricted handler behavior is tested through a test-only route, which is not exposed by the running application; vacation route permissions follow in later milestones.
+Expect 200 for login/profile and 401 without a token. Repeat with `maya@example.com` to check the Validator profile. `/auth/me` supports both roles. Vacation endpoints enforce their own Requester/Validator permissions independently of frontend guards.
 
-There are no refresh tokens: expired tokens require a new login. The planned frontend will keep the token in `sessionStorage`, which JavaScript can read; an XSS bug could steal it. An httpOnly cookie would prevent JavaScript from reading the cookie and would require a cookie/CSRF design. Token storage and login screens will be implemented in the frontend milestone. This browser check keeps the token in the console session only.
+There are no refresh tokens: expired tokens require a new login. The frontend keeps the token and safe profile in `sessionStorage`, which survives reloads in the tab. JavaScript can read it, so an XSS bug could steal it. An httpOnly cookie would prevent JavaScript from reading the cookie and would require a cookie/CSRF design. Logout clears storage and memory. The Axios response interceptor clears the session and redirects on protected-call 401s; wrong-password 401s stay in the login form, and 403s do not log the user out. A response from an older login cannot erase a newer session.
+
+## Frontend behavior and local browser review
+
+- **Session and navigation:** `useSession` exposes the current user, login, and logout. A restored profile is checked through `/auth/me` before protected navigation. Route metadata declares allowed roles; guards redirect visitors to Login and wrong roles to their own home page. Backend checks remain authoritative, including if a user's role changes while the tab is open.
+- **My requests:** a date form with an optional 500-character reason, followed by the user's paginated history. Empty reasons are omitted from JSON. The submit button is disabled while sending, success refreshes page 1, and server errors such as overlap conflicts appear inline. Date input limits are convenience checks; the backend applies Jerusalem's current day.
+- **Review requests:** status, employee, and page are stored in the URL, for example `/dashboard?status=Pending&userId=1&page=2`. Reload and Back/Forward restore the applied view. Changing either filter resets to page 1; **Reset filters** clears both filters and the page. Only Pending rows offer decisions. Rejection opens an inline form, focuses the comment field, and requires a nonblank comment of up to 500 characters. Decisions refresh the results; a competing decision's 409 is displayed and the list reloads. An out-of-range page is corrected with history replacement so Back cannot get trapped on it.
+- **Team planning:** both roles can choose past or future dates, including a single day, up to 366 elapsed days apart. Applying a range stores `from` and `to` in the URL, for example `/team?from=2026-10-16&to=2026-11-15`. Reload and Back/Forward restore the dates and results. **Reset filters** clears the URL dates and restores today in Jerusalem through 30 days later, including any unapplied form edits. This works for Requesters such as Alice and for Validators. Malformed scalar URL values fall back to safe defaults; valid but reversed or overlong date ranges still receive the backend's validation error. Rows display only names and date-only values. Stateless rows use their array index as the key because two people may have identical public names and dates.
+- **Shared UI:** both request screens use the same list, table, status badges, pagination controls, and pagination composable. Team and request tables share the UTC date formatter. Every data area includes loading, error/retry, empty, and success states. Inputs have labels, errors use `role="alert"`, keyboard focus is visible, and wide tables scroll within their container on a phone.
+
+Vue uses `<script setup lang="ts">` throughout. For a React reader, refs hold state, computed values derive it, composables share stateful logic, and typed component emits notify parents. Route views compose feature components rather than owning the API logic.
+
+To review the complete workflow locally:
+
+1. Log in as Alice. Submit two requests with available future dates, then attempt an overlapping request and confirm the error. Leave a reason blank once; no `null` reason is sent.
+2. Reload and confirm the session remains. Log out and log in as Maya. Try page 2, then filter by Pending and Alice; the filter returns to page 1. Confirm the URL changes, reload, and use **Reset filters** and Back/Forward to restore the prior view.
+3. Approve one new request. Reject the other with a nonblank comment. Only Pending rows have decision controls, and both decisions refresh the list.
+4. Log back in as Alice and confirm the statuses and rejection comment. Open Team planning as both users and choose a range containing the approved request; only names and dates appear. Confirm the range survives reload, and test **Reset filters** and Back/Forward there too.
+5. Check an empty team range, phone-width layout, and keyboard navigation. Log out and open `/requests`, `/dashboard`, or `/team` directly; each redirects to Login.
+
+The step 7 Chrome check exercised creation, overlap errors, both decisions, combined filters, page 2, both team views, empty/single-day ranges, reload restoration, wrong-role redirects, invalid-token clearing, and anonymous redirects. Desktop and 375px screenshots were inspected; the page had no horizontal overflow. The two uniquely marked browser fixtures were removed afterward, preserving the original three users and sixteen requests.
 
 ## Vacation commands and business rules
 
@@ -208,7 +236,7 @@ Creation checks for existing overlaps to return a friendly error. The PostgreSQL
 
 After the transaction resolves successfully, the command publishes `VacationRequestCreatedEvent`, `VacationRequestApprovedEvent`, or `VacationRequestRejectedEvent`. The small in-process publisher calls a structured log handler with only event type, request/user/actor IDs, and timestamp. It excludes names, emails, passwords, tokens, reasons, and comments. Listener or logging failures are caught and cannot turn a committed operation into an HTTP failure. Events are not durable across crashes and are not a persistent audit trail; delivery order across concurrent requests is not guaranteed. There is no queue or Event Sourcing.
 
-For a browser check before the frontend milestone, use the authentication console example above to obtain an Alice token and a Maya token. Submit a request with free future dates using Alice's token, then approve it using Maya's. Submit another non-overlapping request and reject it with a comment. Confirm a Requester gets 403 when attempting a decision, missing comments return 400, repeating a final decision returns 409, and overlapping an Approved request returns 409. Application screens and frontend session handling are still planned for the next milestone.
+For direct API checks, use the authentication console example above to obtain an Alice token and a Maya token. Submit a request with free future dates using Alice's token, then approve it using Maya's. Submit another non-overlapping request and reject it with a comment. Confirm a Requester gets 403 when attempting a decision, missing comments return 400, repeating a final decision returns 409, and overlapping an Approved request returns 409. The same successful workflow is available in the application screens.
 
 ## Request listings and team planning
 
@@ -306,7 +334,7 @@ npm run lint
 npm run format:check
 ```
 
-The frontend lint command can apply fixes; backend lint only reports errors.
+The frontend lint command can apply fixes; backend lint only reports errors. The 30 frontend tests cover session restoration, interceptors, role navigation, duplicate submits, empty reasons, overlap errors, rejection comments, shared pagination/filter resets, range boundaries, date-only/team rendering, URL restoration, Back/Forward, reset controls, malformed query values, and automatic page correction.
 
 ## Schema decisions and current limitations
 
@@ -315,7 +343,7 @@ The frontend lint command can apply fixes; backend lint only reports errors.
 - Database checks require `end_date > start_date` and a nonblank comment for Rejected requests.
 - A partial GiST exclusion constraint combines the user ID with `daterange(start_date, end_date, '[]')` for Pending and Approved requests. End dates are inclusive, so vacations that share an endpoint conflict. Rejected requests do not block dates. PostgreSQL enforces this constraint across concurrent writes. See [PostgreSQL range constraints](https://www.postgresql.org/docs/17/rangetypes.html#RANGETYPES-CONSTRAINT) and [btree_gist](https://www.postgresql.org/docs/17/btree-gist.html).
 - Listing indexes start with status or user ID, followed by descending creation time and ID. Both request listings use ten-row SQL pages. Team planning remains unpaginated with a maximum range of 366 elapsed days; the range cap does not limit how many employees or vacations can appear within that window. More query tuning can follow real listing queries.
-- The backend provides login, token verification, role checks, creation ownership, date rules, final-state transitions, commands, business events, requester-owned listings, validator filters/pagination, the requester dropdown, and the approved team view. Frontend session handling and application screens remain for the next milestone.
+- The backend and Vue screens provide login, role navigation, creation, final decisions, requester-owned history, validator filters/pagination, and approved team planning. Dashboard filters/pages and applied team dates can be bookmarked through their query parameters. The My requests page number and unsent forms remain in memory and reset when their screen is recreated. There is no edit, delete, cancellation, registration, or token refresh.
 - CEF uses `root.yaml`, generated handler references, and its own build/local server. Routes can use synchronous or asynchronous `x-inputParser` functions. There is no Express server or AWS deployment.
 - The source target remains ES2022 with ES2023 library types for CEF's bundled esbuild; Node 24 supplies TypeORM's runtime requirements. Explicit SQL column types avoid relying on inferred decorator metadata.
 - Health checks share one pool of five connections with five-second connection/query timeouts.
@@ -325,6 +353,8 @@ The frontend lint command can apply fixes; backend lint only reports errors.
 
 The root `.prettierrc.json` configures semicolons, double quotes, and a 100-character print width. Both projects use the same pinned Prettier version.
 
+Both ESLint configurations use [`@stylistic/padding-line-between-statements`](https://eslint.style/rules/padding-line-between-statements) to require blank lines after the import block, around declaration groups and functions/classes/types, and before returns. Related `const`/`let` declarations stay together, including exported variables. Prettier preserves these blank lines. The frontend's `npm run lint` applies fixes; from `backend/`, use `npx eslint src --fix` to apply spacing fixes or `npm run lint` to check without modifying files. Existing VS Code ESLint fix-on-save settings also apply the rule.
+
 From either project, `npm run format` formats the repository; `npm run format:check` checks without modifying files. Generated output, dependencies, lockfiles, and local environment files are excluded.
 
-Open `vacation-manager.code-workspace`. Repository settings enable Prettier on save and disable experimental tsgo for Vue tooling. After changing language-service settings, run **Developer: Reload Window**.
+Open `vacation-manager.code-workspace`. Its workspace-level settings disable experimental tsgo and select `frontend/node_modules/typescript/lib` for Vue tooling. These are window-scoped VS Code settings: placing them only in the folder's `.vscode/settings.json` does not override a user setting when a workspace file is open. The root `.vscode/settings.json` contains resource settings such as Prettier on save and ESLint working directories. After opening the workspace or changing language-service settings, run **Developer: Reload Window**. Vue imports are checked by Vue Official in the editor and `vue-tsc` in the build; no catch-all `.vue` declaration is needed.
