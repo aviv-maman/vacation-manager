@@ -1,0 +1,12 @@
+# Dependencies and generated output
+**/node_modules/
+**/dist/
+**/dist-ssr/
+**/coverage/
+backend/src/generated/
+**/package-lock.json
+
+# Local caches and environment files
+**/.npm-cache/
+**/.env
+**/.env.*
