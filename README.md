@@ -2,9 +2,9 @@
 
 A vacation request management assignment, built step by step.
 
-## Current milestone: vacation commands and business rules
+## Current milestone: request listings and team planning
 
-The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration and repeatable seed provide the schema and demo data. Login issues an expiring JWT, and protected command endpoints create, approve, and reject vacation requests. Business events produce structured logs after successful commits. The frontend remains the Vue scaffold. Request listings, team planning, and application screens belong to later milestones.
+The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration and repeatable seed provide the schema and demo data. Login issues an expiring JWT, and protected command endpoints create, approve, and reject vacation requests. Business events produce structured logs after successful commits. Requesters can list their own requests; Validators can filter and paginate all requests. Both roles can view approved team vacations without private request details. The frontend remains the Vue scaffold; application screens belong to the next milestone.
 
 ```text
 vacation-manager/
@@ -12,7 +12,7 @@ vacation-manager/
   backend/
     src/entities/                 TypeORM mappings
     src/auth/                     JWT signing, verification, user and role checks
-    src/vacations/                Commands, date rules, and business events
+    src/vacations/                Commands, queries, response views, date rules, and events
     src/database/migrations/      Explicit schema changes
     src/database/                 Migration runner, seed, schema tests
     src/handlers/                 Thin CEF HTTP handlers and input parsers
@@ -208,7 +208,53 @@ Creation checks for existing overlaps to return a friendly error. The PostgreSQL
 
 After the transaction resolves successfully, the command publishes `VacationRequestCreatedEvent`, `VacationRequestApprovedEvent`, or `VacationRequestRejectedEvent`. The small in-process publisher calls a structured log handler with only event type, request/user/actor IDs, and timestamp. It excludes names, emails, passwords, tokens, reasons, and comments. Listener or logging failures are caught and cannot turn a committed operation into an HTTP failure. Events are not durable across crashes and are not a persistent audit trail; delivery order across concurrent requests is not guaranteed. There is no queue or Event Sourcing.
 
-For a browser check before the frontend milestone, use the authentication console example above to obtain an Alice token and a Maya token. Submit a request with free future dates using Alice's token, then approve it using Maya's. Submit another non-overlapping request and reject it with a comment. Confirm a Requester gets 403 when attempting a decision, missing comments return 400, repeating a final decision returns 409, and overlapping an Approved request returns 409. Listings and login screens are still planned for later milestones.
+For a browser check before the frontend milestone, use the authentication console example above to obtain an Alice token and a Maya token. Submit a request with free future dates using Alice's token, then approve it using Maya's. Submit another non-overlapping request and reject it with a comment. Confirm a Requester gets 403 when attempting a decision, missing comments return 400, repeating a final decision returns 409, and overlapping an Approved request returns 409. Application screens and frontend session handling are still planned for the next milestone.
+
+## Request listings and team planning
+
+All read endpoints require a bearer token and return `Cache-Control: no-store`. Responses use camelCase, and vacation dates remain `YYYY-MM-DD` strings.
+
+| Endpoint                      | Role      | Query                                                        | Response                                                                                                |
+| ----------------------------- | --------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------- |
+| `GET /vacation-requests/mine` | Requester | None                                                         | `{ "items": [request, ...] }`                                                                           |
+| `GET /vacation-requests`      | Validator | Optional `status`, `userId`, `page`                          | `{ "items": [requestWithUser, ...], "page": 1, "pageSize": 10, "total": 16 }`                           |
+| `GET /users?role=Requester`   | Validator | Only `Requester` is supported; omitted `role` defaults to it | `{ "items": [{ "id": 1, "name": "Alice Requester" }, ...] }`                                            |
+| `GET /team-vacations`         | Both      | Required `from` and `to` dates                               | `{ "items": [{ "name": "Alice Requester", "startDate": "2050-01-05", "endDate": "2050-01-07" }, ...] }` |
+
+The own-request listing takes identity only from the authenticated user. Any `userId` query is ignored, so one Requester cannot inspect another Requester's requests. It returns all owned requests, including status, reason, and rejection comments, ordered by `createdAt DESC, id DESC`. Validators receive 403 on this endpoint.
+
+The Validator listing supports status and user filters independently or together. Status must be exactly `Pending`, `Approved`, or `Rejected`. `userId` and `page` must be positive decimal integers up to 2147483647; blank, zero, negative, fractional, and malformed values return 400. Missing `page` defaults to 1. Omit unused filters instead of sending empty strings. A valid user ID with no requests produces an empty result.
+
+Pagination runs in SQL through TypeORM `skip`/`take`, with a fixed page size of 10 and `createdAt DESC, id DESC` sorting. `total` counts all rows matching the filters, independent of the requested page. A page beyond the results returns `items: []` with that same filtered total. Each row contains the normal request fields plus `user: { id, name }`. A join fetches names without one user query per request; employee emails and password hashes are not selected. The dropdown endpoint also selects and returns only Requester IDs and names, ordered by name then ID.
+
+Team planning interprets the assignment's team as all users belonging to one team. Both roles see **Approved vacations only**, with exactly `name`, `startDate`, and `endDate`. Reasons, rejection comments, emails, and IDs are excluded through explicit SQL selection and a fixed response projection. The query uses hydrated TypeORM entities rather than raw date values, preserving date strings.
+
+Team dates must pass the same calendar-date check as request submission, but allow past ranges and `to >= from`, including a single day. The inclusive overlap condition is `startDate <= to AND endDate >= from`; it includes vacations starting or ending on a boundary and those spanning the entire filter range. Results are ordered by start date then request ID. There is no team calendar UI or team-view pagination.
+
+For a read-only browser check, open `/health` and run the authentication example to obtain Alice's `session`. Then run:
+
+```js
+const validatorLoginResponse = await fetch("/auth/login", {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ email: "maya@example.com", password: "VacationDemo2026!" }),
+});
+const validatorSession = await validatorLoginResponse.json();
+const readWithToken = async (path, token) => {
+  const response = await fetch(path, { headers: { Authorization: `Bearer ${token}` } });
+  return { status: response.status, body: await response.json() };
+};
+console.log(await readWithToken("/vacation-requests/mine", session.token));
+console.log(await readWithToken("/users?role=Requester", validatorSession.token));
+console.log(await readWithToken("/vacation-requests?page=1", validatorSession.token));
+console.log(await readWithToken("/vacation-requests?page=2", validatorSession.token));
+console.log(
+  await readWithToken("/vacation-requests?status=Approved&userId=1", validatorSession.token),
+);
+console.log(await readWithToken("/team-vacations?from=2000-01-01&to=2100-12-31", session.token));
+```
+
+With the original seed, the all-request pages contain 10 and 6 rows, with total 16. Each Requester has 8 requests and the team view has 6 Approved vacations. These counts change when you submit or decide requests. Requesters receive 403 on the Validator listing/dropdown, and missing tokens receive 401 on every read endpoint. The broad team range above is only for checking the seeded examples; any valid range can be used.
 
 ## Backend tests and checks
 
@@ -229,7 +275,7 @@ npm run format:check
 
 The database tests require a database name ending in `_test` and refuse the application database or an existing application schema. Vitest `globalSetup` applies the initial migration before test files run and reverts it after all files finish. Files run sequentially and truncate only the test users/requests between cases. The schema suite also explicitly checks a migration rollback/reapplication. TypeORM's migration history table and the shared extension remain for later test runs.
 
-Tests cover schema constraints and concurrent overlap rejection, hashes, seed repeatability, input validation through CEF routing, both roles, generic login failures, token verification failures, safe response fields, role changes, deleted users, and invalid JWT configuration. Command tests cover real calendar dates and Jerusalem's day boundary, creation ownership, final decisions, rejection comments, and real PostgreSQL races. They force an insertion to wait on an uncommitted overlap and two decisions to wait on a locked row, then verify the resulting 409 responses and event counts. A separate database connection verifies that event listeners see committed data. Logging failures cannot fail an otherwise successful HTTP response. The test command generates CEF's handler registry first, so it also works on a fresh checkout.
+Tests cover schema constraints and concurrent overlap rejection, hashes, seed repeatability, input validation through CEF routing, both roles, generic login failures, token verification failures, safe response fields, role changes, deleted users, and invalid JWT configuration. Command tests cover real calendar dates and Jerusalem's day boundary, creation ownership, final decisions, rejection comments, and real PostgreSQL races. They force an insertion to wait on an uncommitted overlap and two decisions to wait on a locked row, then verify the resulting 409 responses and event counts. A separate database connection verifies that event listeners see committed data. Logging failures cannot fail an otherwise successful HTTP response. Listing tests cover ownership isolation, every filter combination and filtered totals, SQL pagination with identical timestamps, bounded query counts, dropdown privacy, Approved-only team fields, inclusive and single-day overlaps, past ranges, and string dates. The test command generates CEF's handler registry first, so it also works on a fresh checkout.
 
 If a test run is interrupted before cleanup and the next run refuses the remaining tables, stop any test processes and recreate only the disposable test database. From the repository root:
 
@@ -260,7 +306,7 @@ The frontend lint command can apply fixes; backend lint only reports errors.
 - Database checks require `end_date > start_date` and a nonblank comment for Rejected requests.
 - A partial GiST exclusion constraint combines the user ID with `daterange(start_date, end_date, '[]')` for Pending and Approved requests. End dates are inclusive, so vacations that share an endpoint conflict. Rejected requests do not block dates. PostgreSQL enforces this constraint across concurrent writes. See [PostgreSQL range constraints](https://www.postgresql.org/docs/17/rangetypes.html#RANGETYPES-CONSTRAINT) and [btree_gist](https://www.postgresql.org/docs/17/btree-gist.html).
 - Listing indexes start with status or user ID, followed by descending creation time and ID. More query tuning can follow real listing queries.
-- Login, token verification, role checks, creation ownership, date rules, final-state transitions, commands, and business events are implemented. Requester-owned listings, validator filters/pagination, the approved team view, and frontend session/screens remain for their planned milestones.
+- The backend provides login, token verification, role checks, creation ownership, date rules, final-state transitions, commands, business events, requester-owned listings, validator filters/pagination, the requester dropdown, and the approved team view. Frontend session handling and application screens remain for the next milestone.
 - CEF uses `root.yaml`, generated handler references, and its own build/local server. Routes can use synchronous or asynchronous `x-inputParser` functions. There is no Express server or AWS deployment.
 - The source target remains ES2022 with ES2023 library types for CEF's bundled esbuild; Node 24 supplies TypeORM's runtime requirements. Explicit SQL column types avoid relying on inferred decorator metadata.
 - Health checks share one pool of five connections with five-second connection/query timeouts.

@@ -1,7 +1,6 @@
 import { Response } from "commoneventframework";
 import { requireUser } from "../auth/require-user";
 import { getDatabase } from "../database/data-source";
-import type { VacationRequest } from "../entities/VacationRequest";
 import { HttpError } from "../errors/HttpError";
 import {
   ApproveVacationRequestCommand,
@@ -9,6 +8,7 @@ import {
   RejectVacationRequestCommand,
 } from "../vacations/commands";
 import type { CreateVacationRequestInput } from "../vacations/commands";
+import { requestView } from "../vacations/views";
 import type { CommonEvent, HandlerFn, InputParserFn } from "./types";
 
 const maxTextLength = 500;
@@ -75,20 +75,6 @@ export const parseRejectInput: InputParserFn<RejectionInput> = (event) => {
   }
   return { requestId: id, comments };
 };
-
-function requestView(request: VacationRequest) {
-  return {
-    id: request.id,
-    userId: request.userId,
-    startDate: request.startDate,
-    endDate: request.endDate,
-    reason: request.reason,
-    status: request.status,
-    comments: request.comments,
-    createdAt: request.createdAt,
-    updatedAt: request.updatedAt,
-  };
-}
 
 export const createVacation: HandlerFn<CreateVacationRequestInput> = async (input, event) => {
   const actor = await requireUser(event, ["Requester"]);

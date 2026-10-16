@@ -41,6 +41,40 @@ paths:
         "401":
           description: Authentication required
   /vacation-requests:
+    get:
+      x-handler: handlers/listings#getRequests
+      x-inputParser: handlers/listings#parseListInput
+      summary: List all requests with filtering and ten-row pages as a Validator
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+            default: 1
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [Pending, Approved, Rejected]
+        - name: userId
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 2147483647
+      responses:
+        "200":
+          description: Items with employee ID/name, page, pageSize, and filtered total
+        "400":
+          description: Invalid page or filters
+        "401":
+          description: Authentication required
+        "403":
+          description: Validator role required
     post:
       x-handler: handlers/vacations#createVacation
       x-inputParser: handlers/vacations#parseCreateInput
@@ -75,6 +109,69 @@ paths:
           description: Requester role required
         "409":
           description: Overlapping Pending or Approved request
+  /vacation-requests/mine:
+    get:
+      x-handler: handlers/listings#getMine
+      summary: List only the authenticated Requester's requests
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Own requests including status, reason, and comments
+        "401":
+          description: Authentication required
+        "403":
+          description: Requester role required
+  /users:
+    get:
+      x-handler: handlers/listings#getRequesters
+      x-inputParser: handlers/listings#parseRequesterInput
+      summary: List Requester IDs and names for the Validator's user filter
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [Requester]
+            default: Requester
+      responses:
+        "200":
+          description: Requester IDs and names only, ordered by name then ID
+        "400":
+          description: Unsupported role filter
+        "401":
+          description: Authentication required
+        "403":
+          description: Validator role required
+  /team-vacations:
+    get:
+      x-handler: handlers/listings#getTeamVacations
+      x-inputParser: handlers/listings#parseTeamInput
+      summary: List approved team vacations overlapping an inclusive date range
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+            format: date
+      responses:
+        "200":
+          description: Items containing only name, startDate, and endDate; both roles allowed
+        "400":
+          description: Missing or invalid dates, or to before from
+        "401":
+          description: Authentication required
   /vacation-requests/:id/approve:
     post:
       x-handler: handlers/vacations#approveVacation
