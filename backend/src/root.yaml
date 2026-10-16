@@ -1,0 +1,14 @@
+openapi: 3.0.3
+info:
+  title: Vacation Manager API
+  version: 1.0.0
+paths:
+  /health:
+    get:
+      x-handler: handlers/health#getHealth
+      summary: Verify PostgreSQL connectivity and TypeORM entity loading
+      responses:
+        "200":
+          description: Database connected and entity metadata loaded
+        "503":
+          description: Database unavailable
