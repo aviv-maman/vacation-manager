@@ -3,6 +3,7 @@
 **/dist/
 **/dist-ssr/
 **/coverage/
+**/.vitest/
 backend/src/generated/
 **/package-lock.json
 

@@ -2,95 +2,178 @@
 
 A vacation request management assignment, built step by step.
 
-## Current milestone: verify backend compatibility
+## Current milestone: database schema and demo data
 
-`frontend/` contains the original Vue scaffold with its generated dependency versions. `backend/` now runs a minimal Common Event Framework (CEF) server, connects to PostgreSQL through TypeORM, and exposes a health endpoint for a local browser check.
-
-Step 2 currently resolves CEF **1.0.19** and TypeORM **1.1.2**. Backend runtime dependencies use caret ranges; the lockfile and `npm ci` keep installations reproducible. The schema, migrations, and demo data belong to step 3. Authentication, vacation operations, and application screens will follow in later milestones. The frontend will use Axios and Tailwind CSS when those steps begin.
+The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration defines the assignment's users and vacation requests, and a repeatable seed creates demo data. The frontend remains the Vue scaffold. Authentication, business commands/events, listings, and application screens belong to later milestones.
 
 ```text
 vacation-manager/
   frontend/                       Vue scaffold
-  backend/                        CEF server, TypeORM configuration, health route
-  .vscode/                        Repository editor settings
-  vacation-manager.code-workspace VS Code workspace
-  README.md
+  backend/
+    src/entities/                 TypeORM mappings
+    src/database/migrations/      Explicit schema changes
+    src/database/                 Migration runner, seed, schema tests
+    src/handlers/                 CEF health endpoint
+  compose.yaml                    Optional PostgreSQL with persistent storage
+  .prettierrc.json                 Shared formatting configuration
+  vacation-manager.code-workspace
 ```
 
 ## Prerequisites
 
-- Node.js 24.15 or newer in the 24.x line, or Node.js 26 or newer. The locked frontend tooling requires this range; the project is currently checked with Node.js 24.21.
-- npm (included with Node.js).
-- Git.
-- PostgreSQL, either an existing local instance or Docker for the temporary check below.
+- Node.js 24.15 or newer in the 24.x line, or Node.js 26 or newer. The project is checked with Node.js 24.21.
+- npm and Git.
+- Docker with Compose, or an existing PostgreSQL 17+ server with the `btree_gist` extension available.
 
-## Frontend
+Backend runtime dependencies use caret ranges. Lockfiles and `npm ci` keep installations reproducible. If PowerShell blocks `npm.ps1`, use `npm.cmd` for the same commands.
 
-From the repository root:
+## Install and configure
+
+Install dependencies in each project:
 
 ```sh
 cd frontend
 npm ci
-npm run dev
+cd ../backend
+npm ci
 ```
 
-Open the local URL printed by Vite. The page currently displays the scaffold's welcome message.
+Copy `backend/.env.example` to `backend/.env` (PowerShell, from `backend/`: `Copy-Item .env.example .env`; other shells: `cp .env.example .env`). The example contains local demonstration database credentials. Adjust connection URLs when using another server or host port. AWS Parameter Store stays disabled.
 
-If PowerShell blocks `npm.ps1`, use `npm.cmd` for the same commands.
+## Database option 1: Docker Compose
 
-## Backend and PostgreSQL
-
-For this milestone, start a temporary local PostgreSQL container from any terminal:
+From the repository root:
 
 ```sh
-docker run --rm --name vacation-manager-db-check --label project=vacation-manager --publish 127.0.0.1:5432:5432 --env POSTGRES_USER=vacation --env POSTGRES_PASSWORD=vacation_local --env POSTGRES_DB=vacation_manager --detach postgres:17-alpine
+docker compose up -d --wait
 ```
 
-This is a disposable compatibility check. `--rm` removes the container when stopped, and there is no persistent volume. Step 3 will add Docker Compose with persistent storage. If PostgreSQL is already installed, use an existing empty database instead and set its connection URL in `backend/.env`; Docker is optional.
+PostgreSQL listens on `127.0.0.1:5432`. Compose uses a named `postgres_data` volume and a TCP healthcheck. `docker compose down` stops the service while preserving its data; `docker compose up -d --wait` starts it again.
+
+If port 5432 is occupied, choose a different host port before starting Compose. In PowerShell:
+
+```powershell
+$env:POSTGRES_PORT = "5433"
+docker compose up -d --wait
+```
+
+Also change the port in both connection URLs in `backend/.env`. The container still uses port 5432 internally.
+
+Step 2's disposable `vacation-manager-db-check` container is no longer used. Stop it if it is still occupying the chosen port.
+
+## Database option 2: Existing PostgreSQL
+
+Docker is optional. Create an application database and, for integration tests, a separate empty test database. One local setup, run as a PostgreSQL administrator, is:
+
+```sql
+CREATE ROLE vacation LOGIN PASSWORD 'vacation_local';
+CREATE DATABASE vacation_manager OWNER vacation;
+CREATE DATABASE vacation_manager_test OWNER vacation;
+```
+
+Use an existing role instead if appropriate, and update `backend/.env` to match. The migration installs `btree_gist`, a trusted PostgreSQL extension; the database owner needs permission to create extensions, and the server must have the extension installed.
+
+## Migrate and seed
 
 From `backend/`:
 
 ```sh
-npm ci
+npm run migration:run
 ```
 
-Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`). The example contains only local demonstration credentials. Adjust `DATABASE_URL` if using another PostgreSQL instance. AWS Parameter Store stays disabled.
+This applies pending migrations in a transaction. Running it again does nothing when the schema is current. Application startup keeps `synchronize: false` and `migrationsRun: false`.
 
-Then start the backend:
+The copied `.env.example` already includes this public demo account password, so no additional environment changes are needed for seeding:
+
+```dotenv
+SEED_DEMO_PASSWORD=VacationDemo2026!
+```
+
+Then run:
+
+```sh
+npm run seed
+```
+
+A fresh database receives these accounts and 16 requests, enough to demonstrate pagination later:
+
+| Name            | Email             | Role      |
+| --------------- | ----------------- | --------- |
+| Alice Requester | alice@example.com | Requester |
+| Bob Requester   | bob@example.com   | Requester |
+| Maya Validator  | maya@example.com  | Validator |
+
+All three accounts use the demo password above. Passwords are stored as bcrypt hashes with cost 12. Login will be implemented in step 4.
+
+The seed upserts users by email and updates their demo names, roles, and password hashes. For each requester it inserts eight requests only when that requester has no requests. Repeated runs preserve existing request dates, statuses, and comments, including when run on a later day. A transaction and advisory lock also serialize concurrent seed runs.
+
+Initial dates are relative to the seed date in `Asia/Jerusalem`. Pending, Approved, and Rejected examples are included; rejected examples have comments, and active requests do not overlap for the same user. Rerunning the seed does not refresh dates in existing demo data.
+
+To undo the latest migration, `npm run migration:revert` drops its tables and their data. Use it on a disposable database. The shared `btree_gist` extension remains installed.
+
+## Run locally and check in a browser
+
+Start the backend from `backend/`:
 
 ```sh
 npm run dev
 ```
 
-This generates the handler registry, checks TypeScript, builds the server, and starts it at `http://localhost:8888`. After editing backend source or `root.yaml`, restart this command to rebuild. `npm start` runs an existing build without rebuilding.
-
-## Browser check for step 2
+This generates CEF's handler registry, checks TypeScript, builds, and starts the server. Restart it after backend changes; `npm start` uses an existing build.
 
 Open [http://localhost:8888/health](http://localhost:8888/health). The expected HTTP 200 response is:
 
 ```json
 {
   "status": "ok",
-  "database": "connected",
-  "entityMappings": ["users"]
+  "database": "connected"
 }
 ```
 
-The request passes through CEF's local server, the route in `src/root.yaml`, and `getHealth`. That handler initializes a shared TypeORM connection pool and executes `SELECT 1` against PostgreSQL. `entityMappings` confirms that TypeORM loaded the entity metadata from the built bundle. It does not mean that the users table exists yet.
+This endpoint checks connectivity with `SELECT 1`; migration and seed verification are separate. A database outage returns HTTP 503 with `{"status":"error","database":"unavailable"}`. Restoring PostgreSQL restores health without restarting the backend. Unmapped routes and CEF's automatic diagnostic routes return 404.
 
-Also check [http://localhost:8888/not-found](http://localhost:8888/not-found): it should return HTTP 404 with `{"error":"Route not found"}`. The server root `/` is also intentionally unmapped at this stage. You can see HTTP status codes in your browser's Network panel.
+From `frontend/`, run `npm run dev` and open the URL printed by Vite. The page remains the scaffold's welcome screen; there are no vacation screens yet.
 
-To check the database failure path, stop only the temporary container:
+To inspect the seeded data with Docker, from the repository root:
 
 ```sh
-docker stop vacation-manager-db-check
+docker compose exec db psql -U vacation -d vacation_manager -c "SELECT role, count(*) FROM users GROUP BY role;"
+docker compose exec db psql -U vacation -d vacation_manager -c "SELECT status, count(*) FROM vacation_requests GROUP BY status;"
 ```
 
-Refreshing `/health` should return HTTP 503 with `{"status":"error","database":"unavailable"}`, without database details or a stack trace. Run the earlier `docker run` command again, wait for PostgreSQL to accept connections, then refresh `/health`; it should return HTTP 200 without restarting the backend.
+For an existing PostgreSQL instance, run the same SQL using its SQL client.
 
-## Checks
+## Backend tests and checks
 
-Run these commands from `frontend/`:
+Create the separate test database once. With Docker, from the repository root:
+
+```sh
+docker compose exec db createdb -U vacation vacation_manager_test
+```
+
+Skip that command if the database was already created through the second setup option. Set `TEST_DATABASE_URL` in `backend/.env` to this empty test database, then from `backend/`:
+
+```sh
+npm test
+npm run build
+npm run lint
+npm run format:check
+```
+
+The database tests require a database name ending in `_test` and refuse the application database or an existing application schema. They apply the migration, verify constraints and concurrent overlap rejection, check password hashes and seed repeatability across different dates, then revert the schema. Tests truncate their own users and requests between cases. TypeORM's migration history table and the shared extension remain for later test runs.
+
+If a test run is interrupted before cleanup and the next run refuses the remaining tables, stop any test processes and recreate only the disposable test database. From the repository root:
+
+```sh
+docker compose exec db dropdb -U vacation vacation_manager_test
+docker compose exec db createdb -U vacation vacation_manager_test
+```
+
+These commands delete the test database and its data; they leave `vacation_manager` unchanged. For an existing PostgreSQL server, recreate the separate test database using its administrator tools instead.
+
+Both projects currently resolve Vitest 5.0.5.
+
+Frontend checks, from `frontend/`:
 
 ```sh
 npm run build
@@ -99,40 +182,25 @@ npm run lint
 npm run format:check
 ```
 
-The build runs Vue TypeScript checking and generates ignored output in `frontend/dist/`. The test is the scaffold's example component test. The scaffold's lint command can apply fixes.
+The frontend lint command can apply fixes; backend lint only reports errors.
 
-From `backend/`:
+## Schema decisions and current limitations
 
-```sh
-npm run build
-npm run lint
-npm run format:check
-```
+- The tables contain exactly the assignment's columns. IDs are integer identities; `user_id` is a foreign key. Email is unique, and role/status values use check constraints.
+- Vacation dates are PostgreSQL `DATE` columns mapped to `YYYY-MM-DD` strings. Creation/update timestamps use `timestamptz`.
+- Database checks require `end_date > start_date` and a nonblank comment for Rejected requests.
+- A partial GiST exclusion constraint combines the user ID with `daterange(start_date, end_date, '[]')` for Pending and Approved requests. End dates are inclusive, so vacations that share an endpoint conflict. Rejected requests do not block dates. PostgreSQL enforces this constraint across concurrent writes. See [PostgreSQL range constraints](https://www.postgresql.org/docs/17/rangetypes.html#RANGETYPES-CONSTRAINT) and [btree_gist](https://www.postgresql.org/docs/17/btree-gist.html).
+- Listing indexes start with status or user ID, followed by descending creation time and ID. More query tuning can follow real listing queries.
+- The schema prevents overlap now. Past-date validation, ownership, permissions, final-state transitions, commands, and business events remain for their planned milestones.
+- CEF uses `root.yaml`, generated handler references, and its own build/local server. Routes can use synchronous or asynchronous `x-inputParser` functions. There is no Express server or AWS deployment.
+- The source target remains ES2022 with ES2023 library types for CEF's bundled esbuild; Node 24 supplies TypeORM's runtime requirements. Explicit SQL column types avoid relying on inferred decorator metadata.
+- Health checks share one pool of five connections with five-second connection/query timeouts.
+- `npm audit` reports nine backend dependency entries (two high, seven moderate) in CEF's dependency tree, and four high-severity frontend entries in the lint dependency chain (`@vue/eslint-config-typescript` → `fast-glob` → `micromatch` → `braces`). That frontend chain is unchanged from the committed baseline. No forced downgrades or dependency overrides have been applied.
 
-Backend lint reports errors without modifying files. The database-backed HTTP check above is the integration verification for this milestone; business-rule tests will be added with those features.
+## Formatting and VS Code
 
-## Formatting
+The root `.prettierrc.json` configures semicolons, double quotes, and a 100-character print width. Both projects use the same pinned Prettier version.
 
-The root `.prettierrc.json` sets semicolons, double quotes, and a 100-character print width for both projects. VS Code already formats files on save with Prettier.
+From either project, `npm run format` formats the repository; `npm run format:check` checks without modifying files. Generated output, dependencies, lockfiles, and local environment files are excluded.
 
-From either `frontend/` or `backend/`, run `npm run format` to format the entire repository, including root configuration files. Before committing, run `npm run format:check`; it reports formatting differences without changing files and exits with an error if any file needs formatting. Both projects use the same pinned Prettier version. Generated output, dependency folders, lockfiles, and local environment files are excluded through the shared `.prettierignore`.
-
-## Backend approach and current limitations
-
-- The server started from CEF's `cef-init` scaffold. Routes live in `src/root.yaml`; `cef-gen-handlers` generates static handler imports, and `cef-build` bundles the server and copies the YAML into `dist/`. Generated files are ignored by Git and recreated during the build.
-- CEF's local server is used directly. There is no Express server, AWS configuration, deployment, or deployment ZIP.
-- Routes can use CEF's `x-inputParser` hook. The entry point passes parsed input to the handler or returns a parser's `Response` immediately. A configured parser that cannot be resolved returns a generic server error. The health route does not need an input parser.
-- The `User` entity currently maps only its ID to verify decorator and entity loading. Step 3 will complete the entity and add the explicit migration. Both schema synchronization and automatic migration execution are disabled.
-- Database column types are explicit so the CEF/esbuild bundle does not depend on inferred TypeScript decorator metadata. The TypeScript configuration uses legacy decorators for TypeORM.
-- Application source targets ES2022, which CEF's bundled esbuild understands, with ES2023 library types. Node 24 provides the runtime support required by TypeORM 1.x; the source target does not lower the installed library's runtime requirements.
-- Health checks share one TypeORM pool with a limit of five connections and five-second connection/query timeouts. Failed initialization can be retried on a later request.
-- CEF's automatically added diagnostic routes are not exposed. Only the application health route is available in this milestone.
-- `npm audit` currently reports nine vulnerable dependency entries (two high, seven moderate) in CEF's dependency tree. No forced dependency changes or framework downgrade have been applied; these remain a known dependency limitation to review.
-
-References: [CEF package documentation](https://www.npmjs.com/package/commoneventframework?activeTab=readme), [TypeORM entities](https://typeorm.io/docs/entity/entities/), and [TypeORM PostgreSQL options](https://typeorm.io/docs/drivers/postgres/).
-
-## VS Code
-
-Open `vacation-manager.code-workspace`. The repository settings disable experimental tsgo for Vue tooling compatibility and recommend the Vue Official extension. After changing language-service settings, run **Developer: Reload Window**.
-
-Dependency folders, build output, caches, and local environment files are ignored by Git.
+Open `vacation-manager.code-workspace`. Repository settings enable Prettier on save and disable experimental tsgo for Vue tooling. After changing language-service settings, run **Developer: Reload Window**.

@@ -10,7 +10,6 @@ export const getHealth: HandlerFn = async () => {
     return {
       status: "ok",
       database: "connected",
-      entityMappings: database.entityMetadatas.map((entity) => entity.tableName),
     };
   } catch {
     console.error(JSON.stringify({ type: "DatabaseHealthCheckFailed" }));
