@@ -1,9 +1,12 @@
-import type { CommonEvent } from "commoneventframework/dist/types/commonEvent";
-import type { Response } from "commoneventframework";
+import type { buildCommonEvent, Response } from "commoneventframework";
 
-export type InputParserFn = (event: CommonEvent) => unknown;
+export type CommonEvent = ReturnType<typeof buildCommonEvent>;
 
-export type HandlerFn = (
-  input: unknown,
+export type InputParserFn<Input = unknown> = (
+  event: CommonEvent,
+) => Input | Response | Promise<Input | Response>;
+
+export type HandlerFn<Input = unknown> = (
+  input: Input,
   event: CommonEvent,
 ) => Promise<Response | Record<string, unknown>>;

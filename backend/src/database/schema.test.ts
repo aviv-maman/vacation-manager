@@ -6,22 +6,11 @@ import { createDatabase } from "./data-source";
 import { seedDemoData } from "./seed-demo-data";
 import { User } from "../entities/User";
 import { VacationRequest } from "../entities/VacationRequest";
+import { getTestDatabaseUrl } from "../testing/test-database";
 
-const testUrl = process.env.TEST_DATABASE_URL;
-if (!testUrl || !decodeURIComponent(new URL(testUrl).pathname).endsWith("_test")) {
-  throw new Error("TEST_DATABASE_URL must name a separate database ending in _test");
-}
-if (
-  process.env.DATABASE_URL &&
-  new URL(testUrl).pathname === new URL(process.env.DATABASE_URL).pathname
-) {
-  throw new Error("The test database must differ from DATABASE_URL");
-}
-
-const database = createDatabase(testUrl);
+const database = createDatabase(getTestDatabaseUrl());
 const password = randomBytes(18).toString("base64url");
 let passwordHash: string;
-let migrationApplied = false;
 
 async function createUser(email = "schema-test@example.com") {
   return database.getRepository(User).save({
@@ -39,12 +28,6 @@ function insertRequest(userId: number, startDate = "2035-01-10", endDate = "2035
 describe("initial schema and demo seed", () => {
   beforeAll(async () => {
     await database.initialize();
-    const tables = await database.query<{ table_name: string }[]>(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema = 'public' AND table_name <> 'migrations'",
-    );
-    if (tables.length > 0) throw new Error("Use an empty, dedicated test database");
-    expect(await database.runMigrations()).toHaveLength(1);
-    migrationApplied = true;
     passwordHash = await hash(password, 12);
   });
 
@@ -54,11 +37,7 @@ describe("initial schema and demo seed", () => {
 
   afterAll(async () => {
     if (!database.isInitialized) return;
-    try {
-      if (migrationApplied) await database.undoLastMigration();
-    } finally {
-      await database.destroy();
-    }
+    await database.destroy();
   });
 
   it("creates exactly the assignment columns, date types, and listing indexes", async () => {
@@ -217,13 +196,11 @@ describe("initial schema and demo seed", () => {
 
   it("can revert and reapply the migration", async () => {
     await database.undoLastMigration();
-    migrationApplied = false;
     expect(
       await database.query(
         "SELECT to_regclass('public.users') AS users, to_regclass('public.vacation_requests') AS requests",
       ),
     ).toEqual([{ users: null, requests: null }]);
     expect(await database.runMigrations()).toHaveLength(1);
-    migrationApplied = true;
   });
 });

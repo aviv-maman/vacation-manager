@@ -3,6 +3,43 @@ info:
   title: Vacation Manager API
   version: 1.0.0
 paths:
+  /auth/login:
+    post:
+      x-handler: handlers/auth#login
+      x-inputParser: handlers/auth#parseLoginInput
+      summary: Log in with a seeded account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Signed token and safe user profile
+        "400":
+          description: Invalid input
+        "401":
+          description: Invalid email or password
+  /auth/me:
+    get:
+      x-handler: handlers/auth#getMe
+      summary: Return the current user's profile
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: Current user profile
+        "401":
+          description: Authentication required
   /health:
     get:
       x-handler: handlers/health#getHealth
@@ -12,3 +49,9 @@ paths:
           description: Database connected and entity metadata loaded
         "503":
           description: Database unavailable
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
