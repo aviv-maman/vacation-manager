@@ -10,6 +10,7 @@ import type { APIGatewayProxyStructuredResultV2, Context, LambdaEvent } from "co
 import type { HandlerFn, InputParserFn } from "./handlers/types";
 import { getJwtSecret } from "./auth/jwt";
 import { HttpError } from "./errors/HttpError";
+import { databaseHttpError } from "./errors/database-error";
 import "./generated/HandlerRegistry";
 
 const envReady = loadEnv().then(() => {
@@ -44,11 +45,12 @@ export async function handler(
     const result = await handle(input, commonEvent);
     return result instanceof Response ? result : new Response(200, result);
   } catch (error: unknown) {
-    if (error instanceof HttpError) {
+    const failure = error instanceof HttpError ? error : databaseHttpError(error);
+    if (failure) {
       return new Response(
-        error.statusCode,
-        { error: error.message },
-        error.statusCode === 401 ? { "WWW-Authenticate": "Bearer" } : undefined,
+        failure.statusCode,
+        { error: failure.message },
+        failure.statusCode === 401 ? { "WWW-Authenticate": "Bearer" } : undefined,
       );
     }
     console.error(JSON.stringify({ type: "UnexpectedRequestError" }));

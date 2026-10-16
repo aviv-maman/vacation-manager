@@ -3,6 +3,7 @@ import type { DataSource } from "typeorm";
 import { User } from "../entities/User";
 import { VacationRequest } from "../entities/VacationRequest";
 import type { VacationStatus } from "../entities/VacationRequest";
+import { todayInJerusalem } from "../vacations/dates";
 
 const demoUsers = [
   { name: "Alice Requester", email: "alice@example.com", role: "Requester" },
@@ -22,7 +23,7 @@ export async function seedDemoData(database: DataSource, password: string, now =
       "SEED_DEMO_PASSWORD must contain at least 12 characters and at most 72 UTF-8 bytes",
     );
   }
-  const today = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(now);
+  const today = todayInJerusalem(now);
   const users = await Promise.all(
     demoUsers.map(async (user) => ({ ...user, password: await hash(password, 12) })),
   );

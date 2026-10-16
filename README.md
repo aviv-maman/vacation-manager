@@ -2,9 +2,9 @@
 
 A vacation request management assignment, built step by step.
 
-## Current milestone: authentication and authorization
+## Current milestone: vacation commands and business rules
 
-The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration and repeatable seed provide the schema and demo data. Login now issues an expiring JWT, and a reusable authorization check protects API handlers. The frontend remains the Vue scaffold. Vacation commands/events, listings, and application screens belong to later milestones.
+The backend uses Common Event Framework (CEF) 1.0.19, TypeORM 1.1.2, and PostgreSQL. The initial migration and repeatable seed provide the schema and demo data. Login issues an expiring JWT, and protected command endpoints create, approve, and reject vacation requests. Business events produce structured logs after successful commits. The frontend remains the Vue scaffold. Request listings, team planning, and application screens belong to later milestones.
 
 ```text
 vacation-manager/
@@ -12,9 +12,10 @@ vacation-manager/
   backend/
     src/entities/                 TypeORM mappings
     src/auth/                     JWT signing, verification, user and role checks
+    src/vacations/                Commands, date rules, and business events
     src/database/migrations/      Explicit schema changes
     src/database/                 Migration runner, seed, schema tests
-    src/handlers/                 CEF health, login, and current-user endpoints
+    src/handlers/                 Thin CEF HTTP handlers and input parsers
     src/testing/                  Shared test database setup and safety checks
   compose.yaml                    Optional PostgreSQL with persistent storage
   .prettierrc.json                 Shared formatting configuration
@@ -183,6 +184,32 @@ Expect 200 for login/profile and 401 without a token. Repeat with `maya@example.
 
 There are no refresh tokens: expired tokens require a new login. The planned frontend will keep the token in `sessionStorage`, which JavaScript can read; an XSS bug could steal it. An httpOnly cookie would prevent JavaScript from reading the cookie and would require a cookie/CSRF design. Token storage and login screens will be implemented in the frontend milestone. This browser check keeps the token in the console session only.
 
+## Vacation commands and business rules
+
+All command endpoints require a bearer token. Inputs and responses use camelCase; vacation dates remain `YYYY-MM-DD` strings.
+
+| Endpoint                               | Role      | Input                                                          | Success                       |
+| -------------------------------------- | --------- | -------------------------------------------------------------- | ----------------------------- |
+| `POST /vacation-requests`              | Requester | `startDate`, `endDate`, optional `reason` (max 500 characters) | 201, `{ "request": { ... } }` |
+| `POST /vacation-requests/{id}/approve` | Validator | No body required                                               | 200, `{ "request": { ... } }` |
+| `POST /vacation-requests/{id}/reject`  | Validator | Nonblank `comments` string (max 500 characters)                | 200, `{ "request": { ... } }` |
+
+The request response contains `id`, `userId`, `startDate`, `endDate`, `reason`, `status`, `comments`, `createdAt`, and `updatedAt`. Reasons and rejection comments are trimmed; omitted or blank reasons become `null`. Both text fields are limited to 500 characters before trimming, measured using JavaScript string length (UTF-16 code units); exceeding the limit returns 400. An empty reason must be omitted or sent as `""`, not `null`. No user password, email, or nested user object is included.
+
+- Creation always uses the authenticated Requester's ID and sets `Pending` with no decision comment. Extra identity, role, or status fields cannot override these values. Validators cannot submit requests.
+- Dates must be real calendar dates. A new request may start today in `Asia/Jerusalem`, but cannot start earlier. End date must be strictly after start date.
+- End dates are inclusive. A request ending on the 22nd conflicts with one starting on the 22nd for the same user. Pending and Approved requests block overlaps; Rejected requests do not.
+- Any Validator can approve or reject a Pending request, including one whose start date has passed. Rejection requires a nonblank comment after trimming. Approved and Rejected are final states. No edit, delete, cancellation, or decision reversal endpoints are provided.
+- Invalid input returns 400, missing/invalid authentication 401, wrong roles 403, missing requests 404, and overlapping dates or an already-final request 409. Database details are never returned.
+
+CEF input parsers check HTTP input shapes. Thin handlers authenticate the user and call explicit `CreateVacationRequestCommand`, `ApproveVacationRequestCommand`, or `RejectVacationRequestCommand` classes. Commands enforce business rules and use TypeORM transactions. In `root.yaml`, CEF 1.0.19 requires its scaffold's `:id` route syntax rather than OpenAPI's `{id}` syntax; actual URLs use the numeric request ID.
+
+Creation checks for existing overlaps to return a friendly error. The PostgreSQL exclusion constraint closes the race between that check and insertion; its `23P01` error becomes 409. Check-constraint errors (`23514`) become a generic 400. Decisions acquire a `pessimistic_write` row lock (`SELECT ... FOR UPDATE`) before checking status, so a competing decision waits and then rejects the already-final state. All transactional queries use the transaction's repository, and decisions use `save` so TypeORM updates `updated_at`.
+
+After the transaction resolves successfully, the command publishes `VacationRequestCreatedEvent`, `VacationRequestApprovedEvent`, or `VacationRequestRejectedEvent`. The small in-process publisher calls a structured log handler with only event type, request/user/actor IDs, and timestamp. It excludes names, emails, passwords, tokens, reasons, and comments. Listener or logging failures are caught and cannot turn a committed operation into an HTTP failure. Events are not durable across crashes and are not a persistent audit trail; delivery order across concurrent requests is not guaranteed. There is no queue or Event Sourcing.
+
+For a browser check before the frontend milestone, use the authentication console example above to obtain an Alice token and a Maya token. Submit a request with free future dates using Alice's token, then approve it using Maya's. Submit another non-overlapping request and reject it with a comment. Confirm a Requester gets 403 when attempting a decision, missing comments return 400, repeating a final decision returns 409, and overlapping an Approved request returns 409. Listings and login screens are still planned for later milestones.
+
 ## Backend tests and checks
 
 Create the separate test database once. With Docker, from the repository root:
@@ -202,7 +229,7 @@ npm run format:check
 
 The database tests require a database name ending in `_test` and refuse the application database or an existing application schema. Vitest `globalSetup` applies the initial migration before test files run and reverts it after all files finish. Files run sequentially and truncate only the test users/requests between cases. The schema suite also explicitly checks a migration rollback/reapplication. TypeORM's migration history table and the shared extension remain for later test runs.
 
-Tests cover schema constraints and concurrent overlap rejection, hashes, seed repeatability, input validation through CEF routing, both roles, generic login failures, token verification failures, safe response fields, role changes, deleted users, and invalid JWT configuration. The test command generates CEF's handler registry first, so it also works on a fresh checkout.
+Tests cover schema constraints and concurrent overlap rejection, hashes, seed repeatability, input validation through CEF routing, both roles, generic login failures, token verification failures, safe response fields, role changes, deleted users, and invalid JWT configuration. Command tests cover real calendar dates and Jerusalem's day boundary, creation ownership, final decisions, rejection comments, and real PostgreSQL races. They force an insertion to wait on an uncommitted overlap and two decisions to wait on a locked row, then verify the resulting 409 responses and event counts. A separate database connection verifies that event listeners see committed data. Logging failures cannot fail an otherwise successful HTTP response. The test command generates CEF's handler registry first, so it also works on a fresh checkout.
 
 If a test run is interrupted before cleanup and the next run refuses the remaining tables, stop any test processes and recreate only the disposable test database. From the repository root:
 
@@ -233,7 +260,7 @@ The frontend lint command can apply fixes; backend lint only reports errors.
 - Database checks require `end_date > start_date` and a nonblank comment for Rejected requests.
 - A partial GiST exclusion constraint combines the user ID with `daterange(start_date, end_date, '[]')` for Pending and Approved requests. End dates are inclusive, so vacations that share an endpoint conflict. Rejected requests do not block dates. PostgreSQL enforces this constraint across concurrent writes. See [PostgreSQL range constraints](https://www.postgresql.org/docs/17/rangetypes.html#RANGETYPES-CONSTRAINT) and [btree_gist](https://www.postgresql.org/docs/17/btree-gist.html).
 - Listing indexes start with status or user ID, followed by descending creation time and ID. More query tuning can follow real listing queries.
-- The schema prevents overlap now. Login, token verification, and the reusable role check are implemented. Vacation date/ownership validation, final-state transitions, commands, and business events remain for their planned milestones.
+- Login, token verification, role checks, creation ownership, date rules, final-state transitions, commands, and business events are implemented. Requester-owned listings, validator filters/pagination, the approved team view, and frontend session/screens remain for their planned milestones.
 - CEF uses `root.yaml`, generated handler references, and its own build/local server. Routes can use synchronous or asynchronous `x-inputParser` functions. There is no Express server or AWS deployment.
 - The source target remains ES2022 with ES2023 library types for CEF's bundled esbuild; Node 24 supplies TypeORM's runtime requirements. Explicit SQL column types avoid relying on inferred decorator metadata.
 - Health checks share one pool of five connections with five-second connection/query timeouts.
