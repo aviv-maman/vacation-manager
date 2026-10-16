@@ -17,6 +17,7 @@ const dummyPasswordHash = "$2b$12$nL0Gueo43mHJSV/fLGhJJe95ny1ph6Cx./HqTA9JWo3bYi
 
 export const parseLoginInput: InputParserFn<LoginInput> = (event) => {
   let body: unknown;
+
   try {
     body = JSON.parse(event.body ?? "");
   } catch {
@@ -25,7 +26,9 @@ export const parseLoginInput: InputParserFn<LoginInput> = (event) => {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return new Response(400, { error: "Provide a JSON object with email and password" });
   }
+
   const { email, password } = body as Record<string, unknown>;
+
   if (
     typeof email !== "string" ||
     typeof password !== "string" ||
@@ -36,10 +39,13 @@ export const parseLoginInput: InputParserFn<LoginInput> = (event) => {
       error: "Email and password are required strings; password is limited to 72 UTF-8 bytes",
     });
   }
+
   const normalizedEmail = email.trim().toLowerCase();
+
   if (normalizedEmail.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
     return new Response(400, { error: "Provide a valid email address" });
   }
+
   return { email: normalizedEmail, password };
 };
 
@@ -52,7 +58,9 @@ export const login: HandlerFn<LoginInput> = async ({ email, password }) => {
     .where("user.email = :email", { email })
     .getOne();
   const passwordMatches = await compare(password, user?.password ?? dummyPasswordHash);
+
   if (!user || !passwordMatches) throw new HttpError(401, "Invalid email or password");
+
   return new Response(
     200,
     { token: issueToken(user), user: safeUser(user) },

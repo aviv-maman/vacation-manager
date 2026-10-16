@@ -58,19 +58,24 @@ describe("authentication API and role checks", () => {
 
     // Exercise the real YAML routes and input parser without adding a diagnostic API.
     buildCommonEvent(event("GET", "/health"), resolve("src/root.yaml"));
+
     const routes = new Set<RouteConfig>();
+
     for (const [method, path] of [
       ["POST", "/auth/login"],
       ["GET", "/auth/me"],
       ["GET", "/health"],
     ] as const) {
       const route = getRouteConfig(event(method, path));
+
       if (!route) throw new Error(`Application route is missing: ${method} ${path}`);
       routes.add(route);
     }
+
     const validatorOnly: HandlerFn = async (_input, incoming) => ({
       user: await requireUser(incoming, ["Validator"]),
     });
+
     registerHandlerRef("tests#validatorOnly", validatorOnly);
     routes.add({ method: "GET", path: "/test/validator-only", handler: "tests#validatorOnly" });
     setRoutes(routes);
@@ -110,9 +115,12 @@ describe("authentication API and role checks", () => {
         role: "Validator",
       }),
     );
+
     expect(response.statusCode).toBe(200);
     expect(response.headers?.["Cache-Control"]).toBe("no-store");
+
     const result = body(response);
+
     expect(result.user).toEqual({
       id: requester.id,
       name: requester.name,
@@ -121,7 +129,9 @@ describe("authentication API and role checks", () => {
     });
     expect(Object.keys(result).sort()).toEqual(["token", "user"]);
     expect(typeof result.token).toBe("string");
+
     const payload = jwt.verify(result.token as string, secret, { algorithms: ["HS256"] });
+
     if (typeof payload === "string") throw new Error("Expected an object token payload");
     expect(Object.keys(payload).sort()).toEqual(["exp", "iat", "role", "sub"]);
     expect(payload.sub).toBe(String(requester.id));
@@ -134,6 +144,7 @@ describe("authentication API and role checks", () => {
     const response = await request(
       event("POST", "/auth/login", { email: validator.email, password }),
     );
+
     expect(response.statusCode).toBe(200);
     expect(body(response).user).toMatchObject({ id: validator.id, role: "Validator" });
   });
@@ -145,6 +156,7 @@ describe("authentication API and role checks", () => {
     const wrong = await request(
       event("POST", "/auth/login", { email: requester.email, password: "wrong-password" }),
     );
+
     expect(unknown.statusCode).toBe(401);
     expect(wrong.statusCode).toBe(401);
     expect(body(unknown)).toEqual({ error: "Invalid email or password" });
@@ -169,14 +181,18 @@ describe("authentication API and role checks", () => {
 
   it("rejects malformed JSON through the CEF input parser", async () => {
     const incoming = event("POST", "/auth/login");
+
     incoming.body = "{";
     expect((await request(incoming)).statusCode).toBe(400);
   });
 
   it("does not accept user identity from the body or query without a token", async () => {
     const incoming = event("GET", "/auth/me", { userId: validator.id, role: "Validator" });
+
     incoming.queryStringParameters = { userId: String(validator.id), role: "Validator" };
+
     const response = await request(incoming);
+
     expect(response.statusCode).toBe(401);
     expect(body(response)).toEqual({ error: "Authentication required" });
     expect(response.headers?.["WWW-Authenticate"]).toBe("Bearer");
@@ -186,8 +202,11 @@ describe("authentication API and role checks", () => {
     "rejects malformed authorization header %s",
     async (authorization) => {
       const incoming = event("GET", "/auth/me");
+
       incoming.headers = { authorization };
+
       const response = await request(incoming);
+
       expect(response.statusCode).toBe(401);
       expect(body(response)).toEqual({ error: "Authentication required" });
     },
@@ -211,8 +230,10 @@ describe("authentication API and role checks", () => {
         expiresIn: 3600,
       }),
     ];
+
     for (const token of tokens) {
       const response = await request(event("GET", "/auth/me", undefined, token));
+
       expect(response.statusCode).toBe(401);
       expect(body(response)).toEqual({ error: "Authentication required" });
     }
@@ -241,8 +262,11 @@ describe("authentication API and role checks", () => {
 
   it("returns the current safe profile and accepts case-insensitive header names", async () => {
     const incoming = event("GET", "/auth/me");
+
     incoming.headers = { Authorization: `Bearer ${issueToken(requester)}` };
+
     const response = await request(incoming);
+
     expect(response.statusCode).toBe(200);
     expect(response.headers?.["Cache-Control"]).toBe("no-store");
     expect(body(response)).toEqual({
@@ -257,23 +281,29 @@ describe("authentication API and role checks", () => {
       expiresIn: 3600,
     });
     const denied = await request(event("GET", "/test/validator-only", undefined, forgedRole));
+
     expect(denied.statusCode).toBe(403);
     expect(body(denied)).toEqual({ error: "Forbidden" });
+
     const allowed = await request(
       event("GET", "/test/validator-only", undefined, issueToken(validator)),
     );
+
     expect(allowed.statusCode).toBe(200);
     expect(body(allowed).user).toMatchObject({ id: validator.id, role: "Validator" });
   });
 
   it("reloads role changes and deleted users for an existing token", async () => {
     const token = issueToken(requester);
+
     await database.getRepository(User).update(requester.id, { role: "Validator" });
     expect((await request(event("GET", "/test/validator-only", undefined, token))).statusCode).toBe(
       200,
     );
     await database.getRepository(User).delete(requester.id);
+
     const deleted = await request(event("GET", "/auth/me", undefined, token));
+
     expect(deleted.statusCode).toBe(401);
     expect(body(deleted)).toEqual({ error: "Authentication required" });
   });
@@ -282,9 +312,12 @@ describe("authentication API and role checks", () => {
     "fails safely with invalid JWT configuration %#",
     async (value) => {
       const token = issueToken(requester);
+
       vi.stubEnv("JWT_SECRET", value);
       expect(() => getJwtSecret()).toThrow("JWT_SECRET");
+
       const response = await request(event("GET", "/auth/me", undefined, token));
+
       expect(response.statusCode).toBe(500);
       expect(body(response)).toEqual({ error: "An unexpected error occurred" });
     },

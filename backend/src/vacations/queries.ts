@@ -35,7 +35,9 @@ export async function listRequests(database: DataSource, input: RequestListInput
   if (input.userId !== undefined) {
     query.andWhere("request.userId = :userId", { userId: input.userId });
   }
+
   const [requests, total] = await query.getManyAndCount();
+
   return {
     items: requests.map((request) => ({
       ...requestView(request),
@@ -53,6 +55,7 @@ export async function listRequesters(database: DataSource) {
     select: { id: true, name: true },
     order: { name: "ASC", id: "ASC" },
   });
+
   return { items: users.map((user) => ({ id: user.id, name: user.name })) };
 }
 
@@ -68,6 +71,7 @@ export async function listTeamVacations(database: DataSource, range: TeamRangeIn
     .addOrderBy("request.id", "ASC")
     // Entity hydration preserves TypeORM's DATE-as-string mapping.
     .getMany();
+
   return {
     items: requests.map((request) => ({
       name: request.user.name,

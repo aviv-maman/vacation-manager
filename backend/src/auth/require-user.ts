@@ -20,11 +20,14 @@ export async function requireUser(
   )?.[1];
   const match = typeof authorization === "string" ? /^Bearer +(\S+)$/i.exec(authorization) : null;
   const userId = match?.[1] ? verifyTokenSubject(match[1]) : undefined;
+
   if (!userId) throw new HttpError(401, "Authentication required");
 
   const database = await getDatabase();
   const user = await database.getRepository(User).findOneBy({ id: userId });
+
   if (!user) throw new HttpError(401, "Authentication required");
   if (roles && !roles.includes(user.role)) throw new HttpError(403, "Forbidden");
+
   return safeUser(user);
 }

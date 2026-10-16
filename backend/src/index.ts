@@ -23,6 +23,7 @@ export async function handler(
 ): Promise<APIGatewayProxyStructuredResultV2> {
   try {
     await envReady;
+
     const commonEvent = buildCommonEvent(event);
     const route = getRouteConfig(commonEvent);
 
@@ -32,20 +33,25 @@ export async function handler(
     }
 
     const handle = resolveHandlerRef(route.handler) as HandlerFn | undefined;
+
     if (!handle) throw new Error("Handler configuration is invalid");
 
     const parse = route.inputParser
       ? (resolveHandlerRef(route.inputParser) as InputParserFn | undefined)
       : undefined;
+
     if (route.inputParser && !parse) throw new Error("Input parser configuration is invalid");
 
     const input = parse ? await parse(commonEvent) : {};
+
     if (input instanceof Response) return input;
 
     const result = await handle(input, commonEvent);
+
     return result instanceof Response ? result : new Response(200, result);
   } catch (error: unknown) {
     const failure = error instanceof HttpError ? error : databaseHttpError(error);
+
     if (failure) {
       return new Response(
         failure.statusCode,
@@ -54,6 +60,7 @@ export async function handler(
       );
     }
     console.error(JSON.stringify({ type: "UnexpectedRequestError" }));
+
     return new Response(500, { error: "An unexpected error occurred" });
   }
 }

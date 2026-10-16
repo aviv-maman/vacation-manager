@@ -29,9 +29,11 @@ export class CreateVacationRequestCommand {
         .andWhere("request.status IN (:...statuses)", { statuses: ["Pending", "Approved"] })
         .andWhere("request.startDate <= :endDate AND request.endDate >= :startDate", input)
         .getExists();
+
       if (overlaps) {
         throw new HttpError(409, "Vacation dates overlap an existing Pending or Approved request");
       }
+
       // The exclusion constraint also rejects a competing insert after this check.
       return repository.save(
         repository.create({
@@ -52,6 +54,7 @@ export class CreateVacationRequestCommand {
       actorId: actor.id,
       occurredAt: new Date().toISOString(),
     });
+
     return request;
   }
 }
@@ -68,12 +71,14 @@ async function decideRequest(
   if (status === "Rejected" && !comments?.trim()) {
     throw new HttpError(400, "A nonblank rejection comment is required");
   }
+
   const request = await database.transaction(async (manager) => {
     const repository = manager.getRepository(VacationRequest);
     const existing = await repository.findOne({
       where: { id: requestId },
       lock: { mode: "pessimistic_write" },
     });
+
     if (!existing) throw new HttpError(404, "Vacation request not found");
     // A competing decision waits for the row lock, then sees the committed status.
     if (existing.status !== "Pending") {
@@ -81,6 +86,7 @@ async function decideRequest(
     }
     existing.status = status;
     existing.comments = comments?.trim() || null;
+
     return repository.save(existing);
   });
 
@@ -91,6 +97,7 @@ async function decideRequest(
     actorId: actor.id,
     occurredAt: new Date().toISOString(),
   });
+
   return request;
 }
 

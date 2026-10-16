@@ -66,10 +66,12 @@ function fixture(status: VacationStatus = "Pending", userId = requester.id) {
 
 async function waitForDatabaseLocks(count: number): Promise<void> {
   const deadline = Date.now() + 3000;
+
   while (Date.now() < deadline) {
     const [row] = await database.query<{ count: number }[]>(
       "SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query ILIKE '%vacation_requests%'",
     );
+
     if (row && row.count >= count) return;
     await setTimeout(20);
   }
@@ -89,7 +91,9 @@ describe("vacation commands through CEF routes", () => {
 
   beforeEach(async () => {
     await database.query("TRUNCATE vacation_requests, users RESTART IDENTITY");
+
     const repository = database.getRepository(User);
+
     requester = await repository.save({
       name: "First Requester",
       email: "first@example.com",
@@ -134,6 +138,7 @@ describe("vacation commands through CEF routes", () => {
       status: "Approved",
       comments: "Forged",
     });
+
     expect(response.statusCode).toBe(201);
     expect(body(response).request).toEqual({
       id: expect.any(Number),
@@ -153,7 +158,9 @@ describe("vacation commands through CEF routes", () => {
       actorId: requester.id,
       occurredAt: expect.any(String),
     });
+
     const log = JSON.parse(vi.mocked(console.info).mock.calls[0]![0] as string);
+
     expect(Object.keys(log).sort()).toEqual([
       "actorId",
       "occurredAt",
@@ -167,12 +174,14 @@ describe("vacation commands through CEF routes", () => {
   it("accepts a 500-character reason and rejects 501 before writing or publishing", async () => {
     const input = { startDate: "2050-01-10", endDate: "2050-01-12" };
     const invalid = await api("/vacation-requests", { ...input, reason: "r".repeat(501) });
+
     expect(invalid.statusCode).toBe(400);
     expect(body(invalid)).toEqual({ error: "Reason must not exceed 500 characters" });
     expect(await database.getRepository(VacationRequest).count()).toBe(0);
     expect(businessEvents.publish).not.toHaveBeenCalled();
 
     const valid = await api("/vacation-requests", { ...input, reason: "r".repeat(500) });
+
     expect(valid.statusCode).toBe(201);
     expect(body(valid).request).toMatchObject({ reason: "r".repeat(500) });
     expect(businessEvents.publish).toHaveBeenCalledTimes(1);
@@ -183,12 +192,15 @@ describe("vacation commands through CEF routes", () => {
     async (reason) => {
       const today = todayInJerusalem();
       const end = new Date(`${today}T00:00:00Z`);
+
       end.setUTCDate(end.getUTCDate() + 1);
+
       const response = await api("/vacation-requests", {
         startDate: today,
         endDate: end.toISOString().slice(0, 10),
         reason,
       });
+
       expect(response.statusCode).toBe(201);
       expect(body(response).request).toMatchObject({ startDate: today, reason: null });
     },
@@ -215,6 +227,7 @@ describe("vacation commands through CEF routes", () => {
 
   it("rejects malformed JSON through the create input parser", async () => {
     const incoming = event("/vacation-requests");
+
     incoming.body = "{";
     expect((await handleRequest(incoming, {} as Context)).statusCode).toBe(400);
     expect(businessEvents.publish).not.toHaveBeenCalled();
@@ -248,6 +261,7 @@ describe("vacation commands through CEF routes", () => {
     async (action) => {
       const own = await fixture();
       const other = await fixture("Pending", otherRequester.id);
+
       for (const request of [own, other]) {
         expect(
           (await api(`/vacation-requests/${request.id}/${action}`, { comments: "Coverage" }))
@@ -266,10 +280,12 @@ describe("vacation commands through CEF routes", () => {
     "blocks inclusive overlap with %s requests",
     async (status) => {
       await fixture(status);
+
       const response = await api("/vacation-requests", {
         startDate: "2050-01-12",
         endDate: "2050-01-14",
       });
+
       expect(response.statusCode).toBe(409);
       expect(body(response)).toEqual({
         error: "Vacation dates overlap an existing Pending or Approved request",
@@ -298,18 +314,23 @@ describe("vacation commands through CEF routes", () => {
     async (action) => {
       const request = await fixture();
       const old = new Date("2000-01-01T00:00:00Z");
+
       await database
         .getRepository(VacationRequest)
         .update(request.id, { startDate: "2000-01-10", endDate: "2000-01-12", updatedAt: old });
+
       const response = await api(
         `/vacation-requests/${request.id}/${action}`,
         { comments: "  Coverage needed  " },
         validator,
       );
+
       expect(response.statusCode).toBe(200);
+
       const saved = await database
         .getRepository(VacationRequest)
         .findOneByOrFail({ id: request.id });
+
       expect(saved.status).toBe(action === "approve" ? "Approved" : "Rejected");
       expect(saved.comments).toBe(action === "approve" ? null : "Coverage needed");
       expect(saved.updatedAt.getTime()).toBeGreaterThan(old.getTime());
@@ -335,6 +356,7 @@ describe("vacation commands through CEF routes", () => {
     const request = await fixture();
     const path = `/vacation-requests/${request.id}/reject`;
     const invalid = await api(path, { comments: "c".repeat(501) }, validator);
+
     expect(invalid.statusCode).toBe(400);
     expect(body(invalid)).toEqual({ error: "Rejection comment must not exceed 500 characters" });
     expect(
@@ -343,6 +365,7 @@ describe("vacation commands through CEF routes", () => {
     expect(businessEvents.publish).not.toHaveBeenCalled();
 
     const valid = await api(path, { comments: "c".repeat(500) }, validator);
+
     expect(valid.statusCode).toBe(200);
     expect(body(valid).request).toMatchObject({ status: "Rejected", comments: "c".repeat(500) });
     expect(businessEvents.publish).toHaveBeenCalledTimes(1);
@@ -352,6 +375,7 @@ describe("vacation commands through CEF routes", () => {
     "requires a nonblank rejection comment %#",
     async (input) => {
       const request = await fixture();
+
       expect(
         (await api(`/vacation-requests/${request.id}/reject`, input, validator)).statusCode,
       ).toBe(400);
@@ -374,6 +398,7 @@ describe("vacation commands through CEF routes", () => {
       { comments: "Replacement" },
       validator,
     );
+
     expect(response.statusCode).toBe(409);
     expect(
       await database.getRepository(VacationRequest).findOneByOrFail({ id: request.id }),
@@ -405,6 +430,7 @@ describe("vacation commands through CEF routes", () => {
   it("maps the exclusion constraint's 23P01 to 409 after an overlapping transaction commits", async () => {
     const first = database.createQueryRunner();
     let competing: ReturnType<typeof api> | undefined;
+
     try {
       await first.startTransaction();
       await first.manager
@@ -414,7 +440,9 @@ describe("vacation commands through CEF routes", () => {
       await waitForDatabaseLocks(1);
       expect(businessEvents.publish).not.toHaveBeenCalled();
       await first.commitTransaction();
+
       const response = await competing;
+
       expect(response.statusCode).toBe(409);
       expect(body(response)).toEqual({
         error: "Vacation dates overlap an existing Pending or Approved request",
@@ -432,6 +460,7 @@ describe("vacation commands through CEF routes", () => {
     const request = await fixture();
     const lock = database.createQueryRunner();
     let decisions: ReturnType<typeof api>[] = [];
+
     try {
       await lock.startTransaction();
       await lock.manager
@@ -444,12 +473,16 @@ describe("vacation commands through CEF routes", () => {
       await waitForDatabaseLocks(2);
       expect(businessEvents.publish).not.toHaveBeenCalled();
       await lock.commitTransaction();
+
       const responses: APIGatewayProxyStructuredResultV2[] = await Promise.all(decisions);
+
       expect(responses.map((response) => response.statusCode).sort()).toEqual([200, 409]);
       expect(businessEvents.publish).toHaveBeenCalledTimes(1);
+
       const saved = await database
         .getRepository(VacationRequest)
         .findOneByOrFail({ id: request.id });
+
       expect(
         body(responses.find((response) => response.statusCode === 200)!).request,
       ).toMatchObject({ status: saved.status, comments: saved.comments });
@@ -464,6 +497,7 @@ describe("vacation commands through CEF routes", () => {
     const reader = await createDatabase(testUrl).initialize();
     const observations: boolean[] = [];
     const laterListener = vi.fn();
+
     vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const events = new BusinessEventPublisher([
@@ -481,6 +515,7 @@ describe("vacation commands through CEF routes", () => {
         startDate: "2050-01-10",
         endDate: "2050-01-12",
       });
+
       expect(observations).toEqual([true]);
       expect(laterListener).toHaveBeenCalledTimes(1);
       expect(
@@ -498,16 +533,19 @@ describe("vacation commands through CEF routes", () => {
     vi.spyOn(console, "error").mockImplementation(() => {
       throw new Error("Fallback unavailable");
     });
+
     const response = await api("/vacation-requests", {
       startDate: "2050-01-10",
       endDate: "2050-01-12",
     });
+
     expect(response.statusCode).toBe(201);
     expect(await database.getRepository(VacationRequest).count()).toBe(1);
   });
 
   it("enforces roles in commands as well as HTTP handlers", async () => {
     const input = { startDate: "2050-01-10", endDate: "2050-01-12" };
+
     await expect(
       new CreateVacationRequestCommand(database).execute(validator, input),
     ).rejects.toMatchObject({ statusCode: 403 });

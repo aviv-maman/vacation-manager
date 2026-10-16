@@ -46,6 +46,7 @@ describe("initial schema and demo seed", () => {
     >(
       "SELECT table_name, column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name IN ('users', 'vacation_requests') ORDER BY ordinal_position",
     );
+
     expect(
       columns.filter((column) => column.table_name === "users").map((column) => column.column_name),
     ).toEqual(["id", "name", "email", "password", "role", "created_at"]);
@@ -69,9 +70,11 @@ describe("initial schema and demo seed", () => {
         .filter((column) => ["start_date", "end_date"].includes(column.column_name))
         .map((column) => column.data_type),
     ).toEqual(["date", "date"]);
+
     const indexes = await database.query<{ indexdef: string }[]>(
       "SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname IN ('vacation_requests_status_created_id_idx', 'vacation_requests_user_created_id_idx')",
     );
+
     expect(indexes.map((index) => index.indexdef).join("\n")).toContain(
       "(status, created_at DESC, id DESC)",
     );
@@ -83,6 +86,7 @@ describe("initial schema and demo seed", () => {
 
   it("enforces unique email, allowed roles/statuses, foreign keys, dates, and rejection comments", async () => {
     const user = await createUser();
+
     await expect(createUser()).rejects.toMatchObject({ driverError: { code: "23505" } });
     await expect(
       database.query("UPDATE users SET role = 'Other' WHERE id = $1", [user.id]),
@@ -106,6 +110,7 @@ describe("initial schema and demo seed", () => {
   it("blocks inclusive overlaps but permits another user and Rejected requests", async () => {
     const first = await createUser();
     const second = await createUser("another@example.com");
+
     await insertRequest(first.id);
     await expect(insertRequest(first.id, "2035-01-12", "2035-01-14")).rejects.toMatchObject({
       driverError: { code: "23P01" },
@@ -128,23 +133,30 @@ describe("initial schema and demo seed", () => {
     const user = await createUser();
     const first = database.createQueryRunner();
     const second = database.createQueryRunner();
+
     try {
       await first.startTransaction();
       await second.startTransaction();
+
       const sql =
         "INSERT INTO vacation_requests (user_id, start_date, end_date) VALUES ($1, '2035-02-01', '2035-02-03')";
+
       await first.query(sql, [user.id]);
+
       let settled = false;
       const competing = second.query(sql, [user.id]).then(
         () => {
           settled = true;
+
           return null;
         },
         (error: unknown) => {
           settled = true;
+
           return error;
         },
       );
+
       await setTimeout(100);
       expect(settled).toBe(false);
       await first.commitTransaction();
@@ -159,8 +171,11 @@ describe("initial schema and demo seed", () => {
 
   it("seeds hashed demo accounts and 16 requests once, preserving dates on later runs", async () => {
     const first = await seedDemoData(database, password, new Date("2030-03-28T22:30:00Z"));
+
     expect(first).toEqual({ users: 3, requestsCreated: 16 });
+
     const requests = await database.getRepository(VacationRequest).find({ order: { id: "ASC" } });
+
     expect(requests[0]?.startDate).toBe("2030-03-31");
     expect(typeof requests[0]?.startDate).toBe("string");
     expect(new Set(requests.map((request) => request.status))).toEqual(
@@ -169,11 +184,13 @@ describe("initial schema and demo seed", () => {
     for (const request of requests.filter((request) => request.status === "Rejected")) {
       expect(request.comments?.trim()).toBeTruthy();
     }
+
     const users = await database
       .getRepository(User)
       .createQueryBuilder("user")
       .addSelect("user.password")
       .getMany();
+
     expect(users.filter((user) => user.role === "Requester")).toHaveLength(2);
     expect(users.filter((user) => user.role === "Validator")).toHaveLength(1);
     for (const user of users) {

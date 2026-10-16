@@ -5,6 +5,7 @@ import type { HandlerFn } from "./types";
 export const getHealth: HandlerFn = async () => {
   try {
     const database = await getDatabase();
+
     await database.query("SELECT 1");
 
     return {
@@ -13,6 +14,7 @@ export const getHealth: HandlerFn = async () => {
     };
   } catch {
     console.error(JSON.stringify({ type: "DatabaseHealthCheckFailed" }));
+
     return new Response(503, { status: "error", database: "unavailable" });
   }
 };

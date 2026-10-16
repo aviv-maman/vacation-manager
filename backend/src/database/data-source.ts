@@ -24,6 +24,7 @@ export function createDatabase(url: string): DataSource {
 export function getDatabase(): Promise<DataSource> {
   if (!databaseReady) {
     const url = process.env.DATABASE_URL;
+
     if (!url) throw new Error("DATABASE_URL is required");
 
     const database = createDatabase(url);

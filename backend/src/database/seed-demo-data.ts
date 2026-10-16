@@ -13,7 +13,9 @@ const demoUsers = [
 
 function dateAfter(date: string, days: number): string {
   const result = new Date(`${date}T00:00:00Z`);
+
   result.setUTCDate(result.getUTCDate() + days);
+
   return result.toISOString().slice(0, 10);
 }
 
@@ -23,6 +25,7 @@ export async function seedDemoData(database: DataSource, password: string, now =
       "SEED_DEMO_PASSWORD must contain at least 12 characters and at most 72 UTF-8 bytes",
     );
   }
+
   const today = todayInJerusalem(now);
   const users = await Promise.all(
     demoUsers.map(async (user) => ({ ...user, password: await hash(password, 12) })),
@@ -33,11 +36,14 @@ export async function seedDemoData(database: DataSource, password: string, now =
     await manager.query("SELECT pg_advisory_xact_lock(hashtext($1))", [
       "vacation-manager-demo-seed",
     ]);
+
     let requestsCreated = 0;
 
     for (const [userIndex, user] of users.entries()) {
       await manager.upsert(User, user, ["email"]);
+
       const savedUser = await manager.findOneByOrFail(User, { email: user.email });
+
       if (user.role !== "Requester") continue;
       // Keep existing dates and decisions intact, including when reseeding on a later day.
       if ((await manager.countBy(VacationRequest, { userId: savedUser.id })) > 0) continue;
@@ -45,6 +51,7 @@ export async function seedDemoData(database: DataSource, password: string, now =
       for (let index = 0; index < 8; index++) {
         const status: VacationStatus = (["Pending", "Approved", "Rejected"] as const)[index % 3]!;
         const startDate = dateAfter(today, 2 + userIndex + index * 4);
+
         await manager.insert(VacationRequest, {
           userId: savedUser.id,
           startDate,

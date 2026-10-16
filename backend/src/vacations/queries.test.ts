@@ -25,6 +25,7 @@ let passwordHash: string;
 
 function incoming(url: string, actor: User | null): CommonEvent {
   const parsed = new URL(url, "http://localhost");
+
   return {
     method: "GET",
     path: parsed.pathname,
@@ -50,7 +51,9 @@ function items(response: APIGatewayProxyStructuredResultV2): Record<string, unkn
 
 function dateAfter(days: number): string {
   const result = new Date("2050-01-01T00:00:00Z");
+
   result.setUTCDate(result.getUTCDate() + days);
+
   return result.toISOString().slice(0, 10);
 }
 
@@ -67,7 +70,9 @@ describe("request listings and team planning through CEF routes", () => {
 
   beforeEach(async () => {
     await database.query("TRUNCATE vacation_requests, users RESTART IDENTITY");
+
     const users = database.getRepository(User);
+
     alice = await users.save({
       name: "Alice Requester",
       email: "alice@example.com",
@@ -89,9 +94,11 @@ describe("request listings and team planning through CEF routes", () => {
 
     const repository = database.getRepository(VacationRequest);
     const rows: VacationRequest[] = [];
+
     for (const [offset, user] of [alice, bob].entries()) {
       for (let index = 0; index < 8; index++) {
         const status = statuses[index % statuses.length]!;
+
         rows.push(
           repository.create({
             userId: user.id,
@@ -127,6 +134,7 @@ describe("request listings and team planning through CEF routes", () => {
     "/team-vacations?from=2050-01-01&to=2050-02-01",
   ])("requires authentication on %s", async (url) => {
     const response = await api(url, null);
+
     expect(response.statusCode).toBe(401);
     expect(body(response)).toEqual({ error: "Authentication required" });
   });
@@ -140,8 +148,10 @@ describe("request listings and team planning through CEF routes", () => {
         .filter((request) => request.userId === user.id)
         .map((request) => request.id)
         .reverse();
+
       for (const userId of [String(other.id), "not-a-user"]) {
         const response = await api(`/vacation-requests/mine?userId=${userId}`, user);
+
         expect(response.statusCode).toBe(200);
         expect(body(response)).toMatchObject({ page: 1, pageSize: 10, total: 8 });
         expect(items(response).map((request) => request.id)).toEqual(expected);
@@ -161,6 +171,7 @@ describe("request listings and team planning through CEF routes", () => {
 
   it("paginates each owner's requests without leaking another user's rows or total", async () => {
     const repository = database.getRepository(VacationRequest);
+
     for (const user of [alice, bob]) {
       const added = await repository.save(
         Array.from({ length: 6 }, (_, index) =>
@@ -175,6 +186,7 @@ describe("request listings and team planning through CEF routes", () => {
           }),
         ),
       );
+
       requests.push(...added);
     }
     expect(await repository.count()).toBe(28);
@@ -187,8 +199,10 @@ describe("request listings and team planning through CEF routes", () => {
         .filter((request) => request.userId === user.id)
         .map((request) => request.id)
         .sort((a, b) => b - a);
+
       for (const page of [1, 2, 3]) {
         const response = await api(`/vacation-requests/mine?page=${page}&userId=${other.id}`, user);
+
         expect(response.statusCode).toBe(200);
         expect(body(response)).toMatchObject({ page, pageSize: 10, total: 14 });
         expect(items(response)).toHaveLength(page === 1 ? 10 : page === 2 ? 4 : 0);
@@ -202,7 +216,9 @@ describe("request listings and team planning through CEF routes", () => {
 
   it("returns an empty own list without exposing another user's requests", async () => {
     await database.getRepository(VacationRequest).delete({ userId: alice.id });
+
     const response = await api("/vacation-requests/mine", alice);
+
     expect(response.statusCode).toBe(200);
     expect(body(response)).toEqual({ items: [], page: 1, pageSize: 10, total: 0 });
     expect(await database.getRepository(VacationRequest).count()).toBe(8);
@@ -222,13 +238,16 @@ describe("request listings and team planning through CEF routes", () => {
   it("paginates in a stable order for identical timestamps with no duplicate or missing IDs", async () => {
     const first = await api("/vacation-requests");
     const second = await api("/vacation-requests?page=2");
+
     expect(first.statusCode).toBe(200);
     expect(second.statusCode).toBe(200);
     expect(body(first)).toMatchObject({ page: 1, pageSize: 10, total: 16 });
     expect(body(second)).toMatchObject({ page: 2, pageSize: 10, total: 16 });
     expect(items(first)).toHaveLength(10);
     expect(items(second)).toHaveLength(6);
+
     const ids = [...items(first), ...items(second)].map((request) => request.id);
+
     expect(ids).toEqual(requests.map((request) => request.id).reverse());
     expect(new Set(ids).size).toBe(16);
     expect(items(await api("/vacation-requests?page=1")).map((request) => request.id)).toEqual(
@@ -241,7 +260,9 @@ describe("request listings and team planning through CEF routes", () => {
     await database
       .getRepository(VacationRequest)
       .update(requests[0]!.id, { createdAt: new Date("2041-01-01T00:00:00Z") });
+
     const response = await api("/vacation-requests");
+
     expect(items(response).map((request) => request.id)).toEqual([
       requests[0]!.id,
       ...requests
@@ -254,15 +275,19 @@ describe("request listings and team planning through CEF routes", () => {
   it("uses SQL pagination and a bounded number of queries, with only safe employee fields", async () => {
     const queries = vi.spyOn(database.logger, "logQuery");
     const response = await api("/vacation-requests?page=2");
+
     expect(response.statusCode).toBe(200);
+
     const selects = queries.mock.calls
       .map((call) => call[0])
       .filter((query) => /^SELECT\b/i.test(query));
+
     expect(selects.length).toBeLessThanOrEqual(4);
     expect(selects.some((query) => /\bLIMIT\b/.test(query) && /\bOFFSET\b/.test(query))).toBe(true);
     expect(selects.some((query) => /JOIN "users"/.test(query))).toBe(true);
     for (const request of items(response)) {
       const user = request.user as Record<string, unknown>;
+
       expect(Object.keys(user).sort()).toEqual(["id", "name"]);
       expect(user).toEqual(
         request.userId === alice.id
@@ -282,6 +307,7 @@ describe("request listings and team planning through CEF routes", () => {
     ["Rejected", 4],
   ] as const)("filters by %s with total %i", async (status, total) => {
     const response = await api(`/vacation-requests?status=${status}`);
+
     expect(response.statusCode).toBe(200);
     expect(body(response)).toMatchObject({ page: 1, pageSize: 10, total });
     expect(items(response)).toHaveLength(total);
@@ -290,6 +316,7 @@ describe("request listings and team planning through CEF routes", () => {
 
   it("filters by user with a total counted after filtering", async () => {
     const response = await api(`/vacation-requests?userId=${alice.id}`);
+
     expect(body(response)).toMatchObject({ total: 8 });
     expect(items(response).map((request) => request.id)).toEqual(
       requests
@@ -306,13 +333,16 @@ describe("request listings and team planning through CEF routes", () => {
   ] as const)("combines the user filter with %s", async (status, total) => {
     for (const user of [alice, bob]) {
       const response = await api(`/vacation-requests?userId=${user.id}&status=${status}`);
+
       expect(response.statusCode).toBe(200);
       expect(body(response)).toMatchObject({ total });
       expect(items(response)).toHaveLength(total);
       expect(
         items(response).every((request) => request.userId === user.id && request.status === status),
       ).toBe(true);
+
       const next = await api(`/vacation-requests?userId=${user.id}&status=${status}&page=2`);
+
       expect(body(next)).toEqual({ items: [], page: 2, pageSize: 10, total });
     }
   });
@@ -366,10 +396,12 @@ describe("request listings and team planning through CEF routes", () => {
         (await api(`/vacation-requests?${new URLSearchParams({ [field]: value })}`)).statusCode,
       ).toBe(400);
     }
+
     const mine = await api(
       `/vacation-requests/mine?${new URLSearchParams({ page: value })}`,
       alice,
     );
+
     expect(mine.statusCode).toBe(400);
     expect(body(mine)).toEqual(
       body(await api(`/vacation-requests?${new URLSearchParams({ page: value })}`)),
@@ -378,6 +410,7 @@ describe("request listings and team planning through CEF routes", () => {
 
   it("lists Requesters for the filter dropdown with only IDs and names", async () => {
     const response = await api("/users?role=Requester");
+
     expect(response.statusCode).toBe(200);
     expect(body(response)).toEqual({
       items: [
@@ -402,6 +435,7 @@ describe("request listings and team planning through CEF routes", () => {
   it("allows both roles to see all Approved vacations with exactly the public keys", async () => {
     for (const user of [alice, bob, maya]) {
       const response = await api("/team-vacations?from=2050-01-01&to=2050-02-01", user);
+
       expect(response.statusCode).toBe(200);
       expect(Object.keys(body(response))).toEqual(["items"]);
       expect(items(response)).toHaveLength(6);
@@ -427,6 +461,7 @@ describe("request listings and team planning through CEF routes", () => {
     ["2050-01-01", "2050-01-03", []],
   ] as const)("filters inclusive overlaps from %s through %s", async (from, to, names) => {
     const response = await api(`/team-vacations?from=${from}&to=${to}`, alice);
+
     expect(response.statusCode).toBe(200);
     expect(items(response).map((request) => request.name)).toEqual(names);
     for (const request of items(response)) {
@@ -446,15 +481,19 @@ describe("request listings and team planning through CEF routes", () => {
       status: "Approved",
       reason: "Private past reason",
     });
+
     const queries = vi.spyOn(database.logger, "logQuery");
     const response = await api("/team-vacations?from=2000-01-02&to=2000-01-02", alice);
+
     expect(response.statusCode).toBe(200);
     expect(body(response)).toEqual({
       items: [{ name: alice.name, startDate: "2000-01-01", endDate: "2000-01-03" }],
     });
+
     const reads = queries.mock.calls
       .map((call) => call[0])
       .filter((query) => query.includes('FROM "vacation_requests"'));
+
     expect(reads).toHaveLength(1);
     expect(reads[0]).not.toMatch(/reason|comments|email|password/);
   });
@@ -466,6 +505,7 @@ describe("request listings and team planning through CEF routes", () => {
     ["2024-01-01", "2025-01-02", 400],
   ] as const)("bounds team range from %s through %s with status %i", async (from, to, status) => {
     const response = await api(`/team-vacations?from=${from}&to=${to}`, alice);
+
     expect(response.statusCode).toBe(status);
     if (status === 400) {
       expect(body(response)).toEqual({ error: "Team date range must not exceed 366 days" });
