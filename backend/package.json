@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "codegen": "cef-gen-handlers",
+    "codegen": "node node_modules/commoneventframework/dist/script/generateHandlerRegistry.js",
     "type-check": "npm run codegen && tsc --noEmit",
     "build": "npm run type-check && cef-build --skip-codegen",
     "dev": "npm run build && npm start",
